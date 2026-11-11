@@ -1,9 +1,11 @@
 // Zeichnet das Spiel auf die Leinwand: nächtlicher Irrgarten, hell ist nur,
 // was die eigene Figur sieht.
 //
-// Der Garten wird zweimal vorab gemalt, einmal im Mondlicht und einmal im
-// Dunkeln. Pro Bild entscheidet eine weiche Lichtmaske, wo welche Fassung zu
-// sehen ist. Darüber kommen die Irrlichter und Effekte.
+// Der Garten wird zweimal vorab gemalt, einmal im Dunkeln und einmal im
+// Mondlicht. Die dunkle Fassung liegt als eigenes, ruhendes Bild ganz unten.
+// Pro Bild wird darüber nur das Sichtfeld aus der hellen Fassung
+// ausgeschnitten, dazu kommen die Irrlichter und Effekte. So bleibt der
+// Aufwand pro Bild klein, auch auf großen Bildschirmen ohne schnelle Grafik.
 
 import { WISPS, PLAYER_R, WALL_T, VISION_RADIUS, TICK_RATE, SHIELD_TICKS } from './config.js';
 import { visibility, wallPosts } from './vision.js';
@@ -22,19 +24,16 @@ const THEME = {
   ink: '#101a30',
   alarm: '#ff7a6b',
 };
-const LIGHT_DIV = 3; // die Lichtmaske ist gröber als das Bild, das macht ihre Ränder weich
 const TAU = Math.PI * 2;
 
-export function createRenderer(canvas) {
+// `canvas` zeigt alles, was sich bewegt, `back` darunter den dunklen Garten.
+export function createRenderer(canvas, back) {
   const ctx = canvas.getContext('2d');
+  const backCtx = back.getContext('2d');
   const lit = document.createElement('canvas');
   const dark = document.createElement('canvas');
-  const mix = document.createElement('canvas');
-  const light = document.createElement('canvas');
   const litCtx = lit.getContext('2d');
   const darkCtx = dark.getContext('2d');
-  const mixCtx = mix.getContext('2d');
-  const lightCtx = light.getContext('2d');
   const calm = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   let cw = 0;
@@ -58,6 +57,7 @@ export function createRenderer(canvas) {
   const pops = [];
   const rings = [];
   let shake = 0;
+  let lastJolt = '';
   let flash = 0;
   let flashColor = '#fff';
   const poly = [];
@@ -70,6 +70,8 @@ export function createRenderer(canvas) {
     if (cw * ch * dpr * dpr > 4.5e6) dpr = Math.max(1, Math.sqrt(4.5e6 / (cw * ch)));
     canvas.width = Math.round(cw * dpr);
     canvas.height = Math.round(ch * dpr);
+    back.width = canvas.width;
+    back.height = canvas.height;
     painted = '';
   }
 
@@ -186,35 +188,30 @@ export function createRenderer(canvas) {
     layout(m);
     paintScene(litCtx, lit, m, true);
     paintScene(darkCtx, dark, m, false);
-    mix.width = lit.width;
-    mix.height = lit.height;
-    light.width = Math.ceil(lit.width / (LIGHT_DIV * dpr));
-    light.height = Math.ceil(lit.height / (LIGHT_DIV * dpr));
+    backCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    backCtx.clearRect(0, 0, cw, ch);
+    backCtx.drawImage(dark, ox - pad, oy - pad, dark.width / dpr, dark.height / dpr);
   }
 
   const sx = (x) => ox + x * s;
   const sy = (y) => oy + y * s;
 
+  // Hängt das Sichtfeld um (px, py) als Umriss an den aktuellen Pfad an und
+  // merkt sich, welchen Bereich alle Sichtfelder zusammen überdecken.
+  const lightBox = { x0: 0, y0: 0, x1: 0, y1: 0 };
   function addLight(px, py, radius) {
     visibility(maze, posts, px, py, radius, poly);
-    const q = 1 / LIGHT_DIV;
-    const cx = (pad + px * s) * q;
-    const cy = (pad + py * s) * q;
-    const grad = lightCtx.createRadialGradient(cx, cy, 0, cx, cy, radius * s * q);
-    grad.addColorStop(0, 'rgba(255,255,255,1)');
-    grad.addColorStop(0.5, 'rgba(255,255,255,0.95)');
-    grad.addColorStop(0.85, 'rgba(255,255,255,0.4)');
-    grad.addColorStop(1, 'rgba(255,255,255,0)');
-    lightCtx.fillStyle = grad;
-    lightCtx.beginPath();
     for (let i = 0; i < poly.length; i += 2) {
-      const x = (pad + poly[i] * s) * q;
-      const y = (pad + poly[i + 1] * s) * q;
-      if (i === 0) lightCtx.moveTo(x, y);
-      else lightCtx.lineTo(x, y);
+      const x = poly[i];
+      const y = poly[i + 1];
+      if (i === 0) ctx.moveTo(sx(x), sy(y));
+      else ctx.lineTo(sx(x), sy(y));
+      if (x < lightBox.x0) lightBox.x0 = x;
+      if (x > lightBox.x1) lightBox.x1 = x;
+      if (y < lightBox.y0) lightBox.y0 = y;
+      if (y > lightBox.y1) lightBox.y1 = y;
     }
-    lightCtx.closePath();
-    lightCtx.fill();
+    ctx.closePath();
   }
 
   // Sieht `me` die Stelle (x, y)? Etwas großzügig, damit niemand am Rand flackert.
@@ -520,7 +517,14 @@ export function createRenderer(canvas) {
     lastNow = now;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, cw, ch);
-    if (!view || !view.ready) return;
+    if (!view || !view.ready) {
+      if (painted) {
+        painted = '';
+        backCtx.setTransform(1, 0, 0, 1, 0, 0);
+        backCtx.clearRect(0, 0, back.width, back.height);
+      }
+      return;
+    }
     ensureScene(view.maze);
 
     const me = !spectate && view.slot >= 0 ? view.players[view.slot] : null;
@@ -536,49 +540,58 @@ export function createRenderer(canvas) {
       }
     }
 
-    // Lichtmaske
-    lightCtx.setTransform(1, 0, 0, 1, 0, 0);
-    lightCtx.globalCompositeOperation = 'source-over';
-    lightCtx.clearRect(0, 0, light.width, light.height);
-    lightCtx.globalCompositeOperation = 'lighter';
-    if (allLit) for (const p of view.players) addLight(p.x, p.y, VISION_RADIUS);
-    else addLight(me.x, me.y, VISION_RADIUS);
-
-    mixCtx.setTransform(1, 0, 0, 1, 0, 0);
-    mixCtx.globalCompositeOperation = 'copy';
-    mixCtx.imageSmoothingEnabled = true;
-    mixCtx.imageSmoothingQuality = 'high';
-    mixCtx.drawImage(light, 0, 0, light.width, light.height, 0, 0, light.width * LIGHT_DIV * dpr, light.height * LIGHT_DIV * dpr);
-    mixCtx.globalCompositeOperation = 'source-in';
-    mixCtx.drawImage(lit, 0, 0);
-    // warmer Schein rund um jede Lichtquelle, nur dort, wo ohnehin Licht ist
-    mixCtx.globalCompositeOperation = 'source-atop';
-    for (const p of view.players) {
-      if (!allLit && p !== me) continue;
-      const cx = (pad + p.x * s) * dpr;
-      const cy = (pad + p.y * s) * dpr;
-      const glow = mixCtx.createRadialGradient(cx, cy, 0, cx, cy, s * dpr * 3.2);
-      glow.addColorStop(0, 'rgba(255, 244, 200, 0.26)');
-      glow.addColorStop(1, 'rgba(255, 244, 200, 0)');
-      mixCtx.fillStyle = glow;
-      mixCtx.fillRect(cx - s * dpr * 3.2, cy - s * dpr * 3.2, s * dpr * 6.4, s * dpr * 6.4);
-    }
-    mixCtx.globalCompositeOperation = 'source-over';
-
-    // Erschütterung, wenn man fängt oder gefangen wird
-    let jx = 0;
-    let jy = 0;
+    // Erschütterung, wenn man fängt oder gefangen wird: beide Bilder rücken gemeinsam
+    let jolt = '';
     if (shake > 0 && !calm) {
-      jx = (Math.random() - 0.5) * shake * s * 0.22;
-      jy = (Math.random() - 0.5) * shake * s * 0.22;
+      const jx = (Math.random() - 0.5) * shake * s * 0.22;
+      const jy = (Math.random() - 0.5) * shake * s * 0.22;
+      jolt = `translate(${jx.toFixed(1)}px, ${jy.toFixed(1)}px)`;
     }
     shake = Math.max(0, shake - dt * 3.5);
-    ctx.setTransform(dpr, 0, 0, dpr, jx * dpr, jy * dpr);
+    if (jolt !== lastJolt) {
+      lastJolt = jolt;
+      canvas.style.transform = jolt;
+      back.style.transform = jolt;
+    }
 
-    const lw = lit.width / dpr;
-    const lh = lit.height / dpr;
-    ctx.drawImage(dark, ox - pad, oy - pad, lw, lh);
-    ctx.drawImage(mix, ox - pad, oy - pad, lw, lh);
+    // Sichtfeld: nur dort die helle Fassung des Gartens zeigen
+    ctx.save();
+    ctx.beginPath();
+    lightBox.x0 = Infinity;
+    lightBox.y0 = Infinity;
+    lightBox.x1 = -Infinity;
+    lightBox.y1 = -Infinity;
+    if (allLit) for (const p of view.players) addLight(p.x, p.y, VISION_RADIUS);
+    else addLight(me.x, me.y, VISION_RADIUS);
+    ctx.clip();
+    // nur den Ausschnitt der hellen Fassung übertragen, den die Sichtfelder brauchen
+    const px0 = Math.max(0, Math.floor((pad + lightBox.x0 * s) * dpr) - 2);
+    const py0 = Math.max(0, Math.floor((pad + lightBox.y0 * s) * dpr) - 2);
+    const px1 = Math.min(lit.width, Math.ceil((pad + lightBox.x1 * s) * dpr) + 2);
+    const py1 = Math.min(lit.height, Math.ceil((pad + lightBox.y1 * s) * dpr) + 2);
+    if (px1 > px0 && py1 > py0) {
+      ctx.drawImage(lit, px0, py0, px1 - px0, py1 - py0, ox - pad + px0 / dpr, oy - pad + py0 / dpr, (px1 - px0) / dpr, (py1 - py0) / dpr);
+    }
+    if (!allLit) {
+      // zum Rand der Sichtweite hin verliert sich das Licht im Dunkeln
+      const fade = ctx.createRadialGradient(sx(me.x), sy(me.y), 0, sx(me.x), sy(me.y), VISION_RADIUS * s);
+      fade.addColorStop(0, 'rgba(21, 35, 63, 0)');
+      fade.addColorStop(0.5, 'rgba(21, 35, 63, 0)');
+      fade.addColorStop(0.82, 'rgba(21, 35, 63, 0.5)');
+      fade.addColorStop(1, 'rgba(21, 35, 63, 0.92)');
+      ctx.fillStyle = fade;
+      ctx.fillRect(sx(lightBox.x0) - 2, sy(lightBox.y0) - 2, (lightBox.x1 - lightBox.x0) * s + 4, (lightBox.y1 - lightBox.y0) * s + 4);
+    }
+    // warmer Schein rund um jede Lichtquelle
+    for (const p of view.players) {
+      if (!allLit && p !== me) continue;
+      const glow = ctx.createRadialGradient(sx(p.x), sy(p.y), 0, sx(p.x), sy(p.y), s * 3.2);
+      glow.addColorStop(0, 'rgba(255, 244, 200, 0.26)');
+      glow.addColorStop(1, 'rgba(255, 244, 200, 0)');
+      ctx.fillStyle = glow;
+      ctx.fillRect(sx(p.x) - s * 3.2, sy(p.y) - s * 3.2, s * 6.4, s * 6.4);
+    }
+    ctx.restore();
 
     // Wer ist zu sehen?
     for (const p of view.players) {

@@ -62,6 +62,8 @@ body {
   display: none !important;
 }
 
+/* unten der ruhende, dunkle Garten, darüber alles, was sich bewegt */
+#floor,
 #stage {
   position: fixed;
   inset: 0;

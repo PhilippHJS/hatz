@@ -6,6 +6,7 @@ import { castRay, hWall, vWall } from './maze.js';
 
 const EPS = 1e-4;
 const FAN = 56;
+const HEDGE_DEPTH = 0.11;
 
 // Gitterpunkte, an denen mindestens eine Hecke hängt
 export function wallPosts(m) {
@@ -40,7 +41,15 @@ export function visibility(m, posts, px, py, radius, out = []) {
   for (let i = 0; i < angles.length; i += 1) {
     const dx = Math.cos(angles[i]);
     const dy = Math.sin(angles[i]);
-    const t = castRay(m, px, py, dx, dy, radius);
+    let t = castRay(m, px, py, dx, dy, radius);
+    if (t < radius) {
+      // Ein Stück in die getroffene Hecke hinein, damit sie in voller Breite
+      // beleuchtet ist und nicht nur ihre zugewandte Hälfte.
+      const hx = px + dx * t;
+      const upright = Math.abs(hx - Math.round(hx)) < 1e-6;
+      const steep = Math.max(upright ? Math.abs(dx) : Math.abs(dy), 0.05);
+      t += Math.min(HEDGE_DEPTH / steep, 0.3);
+    }
     out.push(px + dx * t, py + dy * t);
   }
   return out;

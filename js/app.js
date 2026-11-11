@@ -37,7 +37,7 @@ const myId = load(sessionStorage, 'hatz-id') || makeId();
 save(sessionStorage, 'hatz-id', myId);
 
 const canvas = $('#stage');
-const renderer = createRenderer(canvas);
+const renderer = createRenderer(canvas, $('#floor'));
 const keyboard = createKeyboard(window);
 
 let session = null; // { role, code, host, client, net, status, since }
@@ -425,12 +425,28 @@ startTicker(() => {
 
 const panelWidth = () => (window.innerWidth >= 980 ? Math.min(25 * 18, window.innerWidth) * 0.92 : 0);
 
+// Messwerte und ein Eingriff für die Tests: `pilot` ersetzt die Tastatur.
+const debug = { frames: 0, ms: 0, worst: 0, pilot: null };
+
 function frame() {
-  const t = now();
+  const started = now();
+  try {
+    drawFrame(started);
+  } finally {
+    // Auch nach einem Fehler weiterlaufen, statt einzufrieren
+    const spent = now() - started;
+    debug.frames += 1;
+    debug.ms += spent;
+    if (spent > debug.worst) debug.worst = spent;
+    requestAnimationFrame(frame);
+  }
+}
+
+function drawFrame(t) {
   let view = null;
   let screen = 'start';
   if (session) {
-    session.client.frame(t, keyboard.code());
+    session.client.frame(t, debug.pilot ? debug.pilot() : keyboard.code());
     view = session.client.view(t);
     const status = session.client.status;
     const live = view.ready && (status === 'in' || status === 'lost') && session.client.slot >= 0
@@ -469,7 +485,6 @@ function frame() {
     for (const e of demo.client.effects.splice(0)) renderer.effect(e, demoView, t, true);
     renderer.draw(demoView, t, { spectate: true, tags: false });
   }
-  requestAnimationFrame(frame);
 }
 
 window.addEventListener('resize', () => renderer.resize());
@@ -495,6 +510,7 @@ window.__hatz = {
     return session;
   },
   demo,
+  debug,
   view: () => (session ? session.client.view(now()) : null),
 };
 

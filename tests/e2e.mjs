@@ -88,6 +88,7 @@ async function device(label, viewport = { width: 1366, height: 768 }) {
 
 const shot = (page, name) => page.screenshot({ path: path.join(shots, `${name}.png`) });
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+let devices = []; // die Fenster des laufenden Durchgangs, für die Fehlersuche
 const until = (page, fn, arg, timeout = 20000) => page.waitForFunction(fn, arg, { timeout });
 const state = (page) => page.evaluate(() => {
   const s = window.__hatz.session;
@@ -124,6 +125,7 @@ async function run(mode) {
   const g1 = await device(`Gast1/${mode}`);
   const g2 = await device(`Gast2/${mode}`, { width: 1280, height: 720 });
   const all = [host, g1, g2];
+  devices = all;
 
   await host.goto(`${BASE}?relay=${RELAYS}${extra}`);
   await sleep(1500);
@@ -222,13 +224,15 @@ async function run(mode) {
     me.body.y = prey.body.y;
     me.tp += 1;
   }, s1.slot);
-  await until(g1, (slot) => window.__hatz.view().players[slot].score === 1, s1.slot);
+  // Zählt ab dem Stand davor: Beim Loslaufen kann es schon zufällig einen Fang gegeben haben.
+  const wanted = s1.players[s1.slot].score + 1;
+  await until(g1, ([slot, score]) => window.__hatz.view().players[slot].score === score, [s1.slot, wanted]);
   await sleep(250);
   if (direct) await shot(g1, '05-fang');
   await sleep(400);
   const scores = await Promise.all(all.map(async (page) => (await state(page)).players.map((p) => p.score).join()));
   check(scores.every((text) => text === scores[0]) && scores[0].includes('-1'), `Punktestand überall gleich (${scores[0]})`);
-  check((await g1.textContent('#ring .me .pts')) === '1', 'Anzeige zeigt den Punkt');
+  check((await g1.textContent('#ring .me .pts')) === String(wanted), 'Anzeige zeigt den Punkt');
 
   if (direct) {
     // Bild einer Begegnung: Gast 1 sieht Beute und Jäger
@@ -332,6 +336,15 @@ try {
   check(!leaked, 'Mitleser findet weder Namen noch Klartext');
 } catch (err) {
   problems.push(`Abbruch: ${err.stack || err}`);
+  // Was sehen die Fenster in diesem Moment?
+  for (const page of devices) {
+    try {
+      console.log(`     ${page.label}: ${JSON.stringify(await state(page))}`);
+      if (page === devices[0]) console.log(`     Spielstand: ${JSON.stringify(await truth(page))}`);
+    } catch (inner) {
+      console.log(`     ${page.label}: nicht mehr erreichbar (${inner.message.split('\n')[0]})`);
+    }
+  }
   console.log(`FAIL Abbruch: ${err.message}`);
 }
 

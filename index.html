@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hatz</title>
+  <meta name="description" content="Ringjagd für drei im Browser: Jeder jagt einen und wird vom anderen gejagt.">
+  <meta name="theme-color" content="#101a30">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23101a30'/%3E%3Ccircle cx='16' cy='16' r='9' fill='%23ff9a45'/%3E%3Cellipse cx='13' cy='15' rx='1.4' ry='2.2' fill='%23101a30'/%3E%3Cellipse cx='19' cy='15' rx='1.4' ry='2.2' fill='%23101a30'/%3E%3C/svg%3E">
+  <link rel="preload" href="fonts/grenze-gotisch-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/alegreya-sans-latin-500-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <canvas id="stage" aria-label="Spielfeld"></canvas>
+  <div id="scrim" aria-hidden="true"></div>
+
+  <main id="start" class="panel">
+    <h1 class="wordmark">Hatz</h1>
+    <p class="lede">Eine Ringjagd für drei. Du jagst einen Mitspieler, der andere jagt dich.</p>
+
+    <form id="enter" autocomplete="off">
+      <label for="f-name">Dein Name</label>
+      <input id="f-name" type="text" maxlength="14" spellcheck="false" autocapitalize="words">
+      <p id="invited" hidden></p>
+      <button type="submit" class="primary" id="b-main">Raum erstellen</button>
+    </form>
+
+    <form id="join" autocomplete="off">
+      <label for="f-code">Oder mit Raumcode beitreten</label>
+      <div class="row">
+        <input id="f-code" type="text" maxlength="5" spellcheck="false" autocapitalize="characters" placeholder="ABCDE">
+        <button type="submit">Beitreten</button>
+      </div>
+    </form>
+    <button type="button" class="quiet" id="b-own" hidden>Stattdessen einen eigenen Raum erstellen</button>
+    <p class="note" id="start-note" role="status"></p>
+  </main>
+
+  <section id="room" class="panel" hidden>
+    <p class="wordmark small" aria-hidden="true">Hatz</p>
+    <h1 id="room-title">Raum</h1>
+    <p id="room-lead"></p>
+    <ol id="slots"></ol>
+
+    <div id="invite">
+      <label for="f-link">Einladungslink</label>
+      <div class="row">
+        <input id="f-link" type="text" readonly>
+        <button type="button" id="b-copy">Link kopieren</button>
+      </div>
+    </div>
+
+    <fieldset id="length">
+      <legend>Rundenlänge</legend>
+      <label><input type="radio" name="seconds" value="120"><span>2 Minuten</span></label>
+      <label><input type="radio" name="seconds" value="180"><span>3 Minuten</span></label>
+      <label><input type="radio" name="seconds" value="300"><span>5 Minuten</span></label>
+    </fieldset>
+
+    <button type="button" class="primary" id="b-start">Runde starten</button>
+    <p class="note" id="room-note" role="status"></p>
+
+    <details id="rules">
+      <summary>So wird gespielt</summary>
+      <ul>
+        <li>Der Pfeil an deiner Figur zeigt zu deiner Beute. Berühre sie: ein Punkt für dich, einer weniger für sie.</li>
+        <li>Du siehst nur, was deine Figur sieht. Dein Jäger kann hinter jeder Hecke stecken.</li>
+        <li>Wer seine Beute sieht, läuft schneller. Brich den Blickkontakt, um zu entkommen.</li>
+        <li>Sprinten kostet Ausdauer. Wer sich leer sprintet, muss kurz verschnaufen.</li>
+      </ul>
+      <p>Bewegen mit WASD oder den Pfeiltasten, sprinten mit der Leertaste oder Shift.</p>
+    </details>
+
+    <button type="button" class="quiet" id="b-leave">Raum verlassen</button>
+  </section>
+
+  <div id="hud" hidden>
+    <div id="ring" aria-live="off"></div>
+    <div id="timer" aria-label="Restzeit"></div>
+    <button type="button" class="quiet" id="b-quit">Verlassen</button>
+    <p id="conn"></p>
+    <p id="hint">Bewegen mit WASD oder den Pfeiltasten, sprinten mit der Leertaste</p>
+  </div>
+
+  <div id="count" hidden>
+    <p id="count-num"></p>
+    <p id="count-text"></p>
+  </div>
+
+  <script src="vendor/mqtt.min.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

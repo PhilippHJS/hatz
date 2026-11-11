@@ -1,0 +1,542 @@
+@font-face {
+  font-family: "Grenze Gotisch";
+  src: url("../fonts/grenze-gotisch-latin-500-normal.woff2") format("woff2");
+  font-weight: 500;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Grenze Gotisch";
+  src: url("../fonts/grenze-gotisch-latin-700-normal.woff2") format("woff2");
+  font-weight: 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Alegreya Sans";
+  src: url("../fonts/alegreya-sans-latin-400-normal.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Alegreya Sans";
+  src: url("../fonts/alegreya-sans-latin-500-normal.woff2") format("woff2");
+  font-weight: 500;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Alegreya Sans";
+  src: url("../fonts/alegreya-sans-latin-700-normal.woff2") format("woff2");
+  font-weight: 700;
+  font-display: swap;
+}
+
+:root {
+  --night: #101a30;
+  --moon: #f2f0dd;
+  --moon-dim: rgba(242, 240, 221, 0.7);
+  --line: rgba(242, 240, 221, 0.24);
+  --wash: rgba(242, 240, 221, 0.08);
+  --leaf: #8ccf78;
+  --alarm: #ff7a6b;
+  --display: "Grenze Gotisch", "Alegreya Sans", serif;
+  --body: "Alegreya Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: var(--night);
+  color: var(--moon);
+  font-family: var(--body);
+  font-size: 18px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+#stage {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Dunkler Verlauf hinter der Spalte links, damit der Text über dem Garten lesbar bleibt */
+#scrim {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.35s ease;
+  background: linear-gradient(90deg, rgba(16, 26, 48, 0.97) 0, rgba(16, 26, 48, 0.93) 23rem, rgba(16, 26, 48, 0.55) 34rem, rgba(16, 26, 48, 0.25) 100%);
+}
+body[data-screen="start"] #scrim,
+body[data-screen="room"] #scrim {
+  opacity: 1;
+}
+
+/* ---------- Spalte links: Start und Raum ---------- */
+
+.panel {
+  position: fixed;
+  inset: 0 auto 0 0;
+  width: min(25rem, 100vw);
+  padding: clamp(1.25rem, 5vh, 3.25rem) 1.75rem 1.5rem clamp(1.25rem, 4vw, 3rem);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1.1rem;
+}
+
+.wordmark {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: clamp(5.5rem, 19vh, 10rem);
+  line-height: 0.78;
+  margin: 0 0 0.35rem -0.05em;
+  letter-spacing: -0.01em;
+}
+.wordmark.small {
+  font-size: 3.25rem;
+  margin-bottom: 0;
+  color: var(--moon-dim);
+}
+
+.lede {
+  margin: 0 0 0.6rem;
+  font-size: 1.25rem;
+  line-height: 1.3;
+  max-width: 19rem;
+}
+
+h1 {
+  margin: 0;
+}
+#room-title {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 2.6rem;
+  line-height: 1;
+}
+#room-title .code {
+  font-family: var(--body);
+  font-weight: 700;
+  font-size: 0.8em;
+  letter-spacing: 0.12em;
+  margin-left: 0.15em;
+}
+#room-lead {
+  margin: -0.5rem 0 0;
+  color: var(--moon-dim);
+}
+
+form,
+fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+#enter {
+  gap: 0.35rem;
+}
+#enter .primary {
+  margin-top: 0.65rem;
+}
+
+label,
+legend {
+  display: block;
+  padding: 0;
+  font-weight: 500;
+  font-size: 0.95rem;
+  color: var(--moon-dim);
+}
+
+input[type="text"] {
+  width: 100%;
+  min-width: 0;
+  font: inherit;
+  font-weight: 500;
+  color: var(--moon);
+  background: var(--wash);
+  border: 0;
+  border-bottom: 2px solid var(--line);
+  border-radius: 4px 4px 0 0;
+  padding: 0.5rem 0.65rem;
+}
+input[type="text"]::placeholder {
+  color: rgba(242, 240, 221, 0.32);
+}
+input[type="text"]:focus-visible {
+  outline: none;
+  border-bottom-color: var(--moon);
+  background: rgba(242, 240, 221, 0.13);
+}
+#f-code {
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+#f-link {
+  font-size: 0.9rem;
+  color: var(--moon-dim);
+}
+
+.row {
+  display: flex;
+  gap: 0.5rem;
+}
+.row input {
+  flex: 1;
+}
+
+button {
+  font: inherit;
+  font-weight: 700;
+  color: var(--moon);
+  background: transparent;
+  border: 2px solid var(--line);
+  border-radius: 0.55rem;
+  padding: 0.45rem 0.9rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+button:hover {
+  border-color: var(--moon);
+}
+button:focus-visible,
+#length input:focus-visible + span,
+summary:focus-visible {
+  outline: 3px solid var(--moon);
+  outline-offset: 2px;
+}
+button.primary {
+  font-size: 1.15rem;
+  color: var(--night);
+  background: var(--leaf);
+  border-color: var(--leaf);
+  padding: 0.7rem 1rem;
+}
+button.primary:hover {
+  background: #a6e091;
+  border-color: #a6e091;
+}
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+button.quiet {
+  align-self: flex-start;
+  border: 0;
+  padding: 0.2rem 0;
+  font-weight: 500;
+  color: var(--moon-dim);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+  text-decoration-color: var(--line);
+}
+button.quiet:hover {
+  color: var(--moon);
+  text-decoration-color: var(--moon);
+}
+
+.note {
+  margin: 0;
+  min-height: 1.4em;
+  font-size: 0.95rem;
+  color: var(--moon-dim);
+}
+.note.bad {
+  color: var(--alarm);
+}
+#invited {
+  margin: 0.5rem 0 0;
+}
+
+/* Die drei Plätze */
+#slots {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--line);
+}
+#slots li {
+  display: grid;
+  grid-template-columns: 2rem 1fr auto;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--line);
+}
+#slots svg {
+  width: 2rem;
+  height: 2rem;
+  display: block;
+}
+#slots .who {
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#slots .who small {
+  font-weight: 500;
+  font-size: 0.85rem;
+  color: var(--moon-dim);
+  margin-left: 0.4rem;
+}
+#slots .state {
+  font-size: 0.9rem;
+  color: var(--moon-dim);
+  text-align: right;
+}
+#slots .pts {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 1.9rem;
+  line-height: 1;
+  min-width: 1.5ch;
+  text-align: right;
+}
+
+#length {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+#length legend {
+  margin-bottom: 0.35rem;
+}
+#length label {
+  position: relative;
+  color: var(--moon);
+  cursor: pointer;
+}
+#length input {
+  position: absolute;
+  opacity: 0;
+  inset: 0;
+  margin: 0;
+  cursor: pointer;
+}
+#length span {
+  display: block;
+  padding: 0.3rem 0.7rem;
+  border: 2px solid var(--line);
+  border-radius: 0.55rem;
+  font-weight: 500;
+}
+#length input:checked + span {
+  border-color: var(--moon);
+  background: var(--wash);
+  font-weight: 700;
+}
+#length:disabled label {
+  cursor: default;
+  opacity: 0.6;
+}
+
+#rules {
+  font-size: 0.95rem;
+  color: var(--moon-dim);
+}
+#rules summary {
+  cursor: pointer;
+  font-weight: 500;
+  color: var(--moon);
+  border-radius: 4px;
+}
+#rules ul {
+  margin: 0.5rem 0;
+  padding-left: 1.1rem;
+}
+#rules li {
+  margin-bottom: 0.35rem;
+}
+#rules p {
+  margin: 0.5rem 0 0;
+}
+
+/* ---------- Anzeige im Spiel ---------- */
+
+#hud {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+#hud button {
+  pointer-events: auto;
+}
+
+#ring {
+  position: absolute;
+  top: 0.7rem;
+  left: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+#ring .chip {
+  display: grid;
+  grid-template-columns: 1.9rem auto auto;
+  grid-template-rows: auto auto;
+  column-gap: 0.45rem;
+  align-items: center;
+  padding: 0.15rem 0.6rem 0.2rem 0.35rem;
+  border-radius: 0.6rem;
+}
+#ring .chip.me {
+  background: var(--wash);
+  box-shadow: inset 0 0 0 2px var(--line);
+}
+#ring svg {
+  grid-row: 1 / 3;
+  width: 1.9rem;
+  height: 1.9rem;
+  display: block;
+}
+#ring .who {
+  font-weight: 700;
+  line-height: 1.1;
+  max-width: 9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#ring .role {
+  grid-column: 2;
+  font-size: 0.8rem;
+  line-height: 1.1;
+  color: var(--moon-dim);
+}
+#ring .pts {
+  grid-row: 1 / 3;
+  grid-column: 3;
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 2.1rem;
+  line-height: 1;
+  min-width: 1.4ch;
+  text-align: right;
+}
+#ring .hunts {
+  width: 1.5rem;
+  height: 1rem;
+  flex: none;
+  color: var(--moon-dim);
+}
+
+#timer {
+  position: absolute;
+  top: 0.35rem;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 2.9rem;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+#timer.soon {
+  color: var(--alarm);
+}
+
+#b-quit {
+  position: absolute;
+  top: 0.9rem;
+  right: 1rem;
+  font-size: 0.9rem;
+}
+
+#conn {
+  position: absolute;
+  left: 1rem;
+  bottom: 0.5rem;
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--moon-dim);
+}
+#conn.bad {
+  color: var(--alarm);
+}
+
+#hint {
+  position: absolute;
+  left: 50%;
+  bottom: 0.5rem;
+  transform: translateX(-50%);
+  margin: 0;
+  font-size: 0.95rem;
+  white-space: nowrap;
+  transition: opacity 0.6s ease;
+}
+#hint.gone {
+  opacity: 0;
+}
+
+#count {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  background: radial-gradient(ellipse at center, rgba(16, 26, 48, 0.72) 0, rgba(16, 26, 48, 0) 55%);
+}
+#count-num {
+  margin: 0;
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: clamp(8rem, 34vh, 17rem);
+  line-height: 0.8;
+}
+#count-text {
+  margin: 1.2rem 0 0;
+  font-size: 1.45rem;
+  font-weight: 500;
+  max-width: 30rem;
+  text-wrap: balance;
+}
+#count-text b {
+  font-weight: 700;
+}
+
+@media (max-width: 720px) {
+  #scrim {
+    background: rgba(16, 26, 48, 0.9);
+  }
+  .panel {
+    width: 100vw;
+  }
+  #ring .role,
+  #hint {
+    display: none;
+  }
+  #timer {
+    font-size: 2.2rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #scrim,
+  #hint {
+    transition: none;
+  }
+}

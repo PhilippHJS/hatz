@@ -9,7 +9,8 @@ import { createBot } from '../js/bots.js';
 import { makeRng } from '../js/rng.js';
 import {
   HIT_R, WALK_SPEED, SPRINT_SPEED, DT, TICK_RATE, COUNTDOWN_TICKS, SHIELD_TICKS, CATCH_DIST,
-  SPRINT_SECONDS, MAZE_W, MAZE_H, RESPAWN_TICKS, VISION_RADIUS,
+  SPRINT_SECONDS, MAZE_W, MAZE_H, RESPAWN_TICKS, VISION_RADIUS, HUNT_BOOST,
+  SETTINGS, DEFAULT_LEVELS, DEFAULT_RULES, cleanLevels, rulesFor,
 } from '../js/config.js';
 
 // Kleinster Abstand der Figur zu irgendeiner Hecke
@@ -274,14 +275,14 @@ test('Regeln: Sichtkreis und Jagdfieber', () => {
   const side = hunter.body.x < MAZE_W / 2 ? 1 : -1;
   prey.body.x = hunter.body.x + side * (VISION_RADIUS - 0.1);
   prey.body.y = hunter.body.y;
-  assert.equal(sees(hunter, prey), true);
-  assert.equal(sees(prey, hunter), true, 'Sicht gilt in beide Richtungen');
+  assert.equal(sees(hunter, prey, VISION_RADIUS), true);
+  assert.equal(sees(prey, hunter, VISION_RADIUS), true, 'Sicht gilt in beide Richtungen');
   stepSim(sim, idle);
   assert.equal(hunter.body.hot, true, 'Beute im Sichtkreis: Jagdfieber');
   assert.equal(prey.body.hot, false, 'der Gejagte wird davon nicht schneller');
   // knapp außerhalb
   prey.body.x = hunter.body.x + side * (VISION_RADIUS + 0.1);
-  assert.equal(sees(hunter, prey), false);
+  assert.equal(sees(hunter, prey, VISION_RADIUS), false);
   stepSim(sim, idle);
   assert.equal(hunter.body.hot, false);
   // geschützte oder aussetzende Beute zählt nicht
@@ -291,7 +292,7 @@ test('Regeln: Sichtkreis und Jagdfieber', () => {
   assert.equal(hunter.body.hot, false);
   prey.shield = 0;
   prey.dead = 20;
-  assert.equal(sees(hunter, prey), false, 'wer aussetzt, ist nicht zu sehen');
+  assert.equal(sees(hunter, prey, VISION_RADIUS), false, 'wer aussetzt, ist nicht zu sehen');
   stepSim(sim, idle);
   assert.equal(hunter.body.hot, false);
 });
@@ -330,4 +331,149 @@ test('Bots: jagen, fliehen und fangen sich gegenseitig', () => {
     for (const dist of moved) assert.ok(dist > 120, `Startwert ${seed}: Bot kaum bewegt (${dist.toFixed(0)})`);
   }
   assert.ok(catches >= 6, `nur ${catches} Fänge in 6 Runden`);
+});
+
+// Stufen in der Reihenfolge von SETTINGS: Tempo, Sichtkreis, Labyrinth, Ausdauer, Auszeit, Jagdfieber
+const levelsOf = (changes) => SETTINGS.map((setting) => (setting.key in changes ? changes[setting.key] : 1));
+
+test('Einstellungen: Stufen werden zu Regeln', () => {
+  assert.deepEqual(SETTINGS.map((setting) => setting.key), ['speed', 'vision', 'maze', 'stamina', 'respawn', 'fever']);
+  for (const setting of SETTINGS) {
+    assert.equal(setting.options.length, 3, setting.key);
+    assert.equal(setting.values.length, 3, setting.key);
+  }
+  // Die mittlere Stufe ist das bisherige Spiel.
+  assert.deepEqual(DEFAULT_RULES, {
+    speed: 1, vision: VISION_RADIUS, mazeW: MAZE_W, mazeH: MAZE_H,
+    sprintSeconds: SPRINT_SECONDS, respawnTicks: RESPAWN_TICKS, huntBoost: HUNT_BOOST,
+  });
+  const low = rulesFor(SETTINGS.map(() => 0));
+  const high = rulesFor(SETTINGS.map(() => 2));
+  for (const key of Object.keys(DEFAULT_RULES)) {
+    assert.ok(low[key] < DEFAULT_RULES[key] && DEFAULT_RULES[key] < high[key], `${key}: ${low[key]} < ${DEFAULT_RULES[key]} < ${high[key]}`);
+  }
+  assert.equal(low.huntBoost, 1, 'Jagdfieber aus heißt kein Vorteil');
+  // Unsinn von außen wird zur mittleren Stufe.
+  assert.deepEqual(cleanLevels(undefined), DEFAULT_LEVELS);
+  assert.deepEqual(cleanLevels([2, -1, 7, 'x', 1.5, 0, 2, 2]), [2, 1, 1, 1, 1, 0]);
+  assert.deepEqual(rulesFor('quatsch'), DEFAULT_RULES);
+});
+
+test('Einstellungen: jede Labyrinthgröße ist zusammenhängend, spiegelgleich, ohne Sackgassen', () => {
+  for (const [W, H] of SETTINGS.find((setting) => setting.key === 'maze').values) {
+    assert.equal(W % 2, 0);
+    for (let seed = 1; seed <= 60; seed += 1) {
+      const m = buildMaze(seed * 7919, W, H);
+      assert.equal(m.W, W);
+      assert.equal(m.H, H);
+      for (let i = 0; i < m.N * m.N; i += 1) assert.ok(m.dist[i] < 255, `${W}x${H}, Startwert ${seed}: nicht zusammenhängend`);
+      for (let c = 0; c < m.N; c += 1) assert.ok(m.nbr[c].length >= 2, `${W}x${H}, Startwert ${seed}: Sackgasse`);
+      for (let y = 0; y < m.H; y += 1) for (let x = 0; x <= m.W; x += 1) assert.equal(vWall(m, x, y), vWall(m, m.W - x, y));
+    }
+  }
+});
+
+test('Einstellungen: Tempo wirkt auf Gehen und Sprinten, Hecken halten auch beim schnellsten', () => {
+  const lane = mazeFromText(['#' + '##'.repeat(40), '#' + '  '.repeat(39) + ' #', '#' + '##'.repeat(40)]);
+  const run = (rules, sprint) => {
+    const b = newBody(0.5, 0.5);
+    for (let t = 0; t < 60; t += 1) stepBody(lane, b, packInput(1, 0, sprint), rules);
+    return b.vx;
+  };
+  for (const level of [0, 1, 2]) {
+    const rules = rulesFor(levelsOf({ speed: level }));
+    assert.ok(Math.abs(run(rules, false) - WALK_SPEED * rules.speed) < 0.01, `Gehen auf Stufe ${level}`);
+    assert.ok(Math.abs(run(rules, true) - SPRINT_SPEED * rules.speed) < 0.01, `Sprinten auf Stufe ${level}`);
+  }
+  // Ausdauer reicht je nach Stufe unterschiedlich lange
+  for (const level of [0, 1, 2]) {
+    const rules = rulesFor(levelsOf({ stamina: level }));
+    const b = newBody(0.5, 0.5);
+    let ticks = 0;
+    while (!b.ex && ticks < 600) {
+      stepBody(lane, b, packInput(1, 0, true), rules);
+      if (b.x > 30) b.x = 1;
+      ticks += 1;
+    }
+    assert.ok(Math.abs(ticks / TICK_RATE - rules.sprintSeconds) < 0.05, `Ausdauer Stufe ${level}: ${ticks} Schritte`);
+  }
+  // schnellste Runde: Tempo schnell, Jagdfieber stark, Beute dauernd im Blick
+  const fast = rulesFor(levelsOf({ speed: 2, fever: 2, stamina: 2 }));
+  const top = SPRINT_SPEED * fast.speed * fast.huntBoost;
+  for (let seed = 1; seed <= 6; seed += 1) {
+    const m = buildMaze(seed * 104729, 24, 14);
+    const rng = makeRng(seed);
+    const b = newBody(0.5 + rng.int(m.W), 0.5 + rng.int(m.H));
+    let code = IDLE;
+    let fastest = 0;
+    for (let t = 0; t < 12000; t += 1) {
+      if (t % 11 === 0) code = packInput(rng.int(3) - 1, rng.int(3) - 1, rng() < 0.7);
+      b.hot = true;
+      stepBody(m, b, code, fast);
+      fastest = Math.max(fastest, Math.hypot(b.vx, b.vy));
+      assert.ok(clearance(m, b.x, b.y) >= HIT_R - 1e-6, `Startwert ${seed}, Schritt ${t}: in der Hecke`);
+    }
+    assert.ok(fastest > top * 0.97 && fastest <= top + 1e-9, `Spitzentempo ${fastest.toFixed(2)} von ${top.toFixed(2)}`);
+  }
+});
+
+test('Einstellungen: gelten für die Runde, mit der sie gestartet wurde', () => {
+  const sim = createSim();
+  const levels = levelsOf({ vision: 0, maze: 0, respawn: 0, fever: 2 });
+  startRound(sim, 2024, 60, levels);
+  assert.equal(sim.maze.W, 16);
+  assert.equal(sim.maze.H, 10);
+  assert.deepEqual(sim.levels, levels);
+  const idle = [[IDLE], [IDLE], [IDLE]];
+  for (let t = 0; t < COUNTDOWN_TICKS; t += 1) stepSim(sim, idle);
+  const hunter = sim.players[0];
+  const prey = sim.players[preyOf(sim.ringDir, 0)];
+  const third = sim.players[hunterOf(sim.ringDir, 0)];
+  third.body.x = hunter.body.x < 8 ? 15.5 : 0.5;
+  third.body.y = hunter.body.y;
+  const side = hunter.body.x < 8 ? 1 : -1;
+  // 3 Felder entfernt: im normalen Kreis sichtbar, im kleinen nicht
+  prey.body.x = hunter.body.x + side * 3;
+  prey.body.y = hunter.body.y;
+  stepSim(sim, idle);
+  assert.equal(hunter.body.hot, false, 'kleiner Sichtkreis reicht keine 3 Felder');
+  prey.body.x = hunter.body.x + side * 2.4;
+  stepSim(sim, idle);
+  assert.equal(hunter.body.hot, true);
+  // Fang: Auszeit dauert eine Sekunde
+  prey.body.x = hunter.body.x;
+  stepSim(sim, idle);
+  assert.equal(prey.dead, TICK_RATE);
+  let ticks = 0;
+  while (prey.dead > 0) {
+    stepSim(sim, idle);
+    ticks += 1;
+  }
+  assert.equal(ticks, TICK_RATE);
+
+  // Die nächste Runde kann andere Einstellungen haben.
+  startRound(sim, 2025, 60);
+  assert.equal(sim.maze.W, MAZE_W);
+  assert.deepEqual(sim.rules, DEFAULT_RULES);
+});
+
+test('Einstellungen: Bots kommen mit jeder Stufe zurecht', () => {
+  for (const setting of SETTINGS) {
+    for (const level of [0, 2]) {
+      const sim = createSim();
+      startRound(sim, 555 + level, 60, levelsOf({ [setting.key]: level }));
+      const bots = [0, 1, 2].map((slot) => createBot(slot, 9));
+      const moved = [0, 0, 0];
+      while (sim.phase !== PHASE.END) {
+        const inputs = sim.phase === PHASE.PLAY ? bots.map((bot) => [bot.think(sim)]) : [[IDLE], [IDLE], [IDLE]];
+        const before = sim.players.map((p) => [p.body.x, p.body.y, p.tp]);
+        stepSim(sim, inputs);
+        sim.players.forEach((p, i) => {
+          if (p.tp === before[i][2]) moved[i] += Math.hypot(p.body.x - before[i][0], p.body.y - before[i][1]);
+        });
+      }
+      assert.equal(sim.players.reduce((sum, p) => sum + p.score, 0), 0);
+      for (const dist of moved) assert.ok(dist > 60, `${setting.label} Stufe ${level}: Bot kaum bewegt (${dist.toFixed(0)} Felder)`);
+    }
+  }
 });

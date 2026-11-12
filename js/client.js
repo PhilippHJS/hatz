@@ -10,7 +10,7 @@
 import { buildMaze } from './maze.js';
 import { newBody, copyBody, stepBody, IDLE } from './physics.js';
 import { preyOf, hunterOf, PHASE } from './sim.js';
-import { DT, TICK_RATE, PROTOCOL, WISPS } from './config.js';
+import { DT, TICK_RATE, PROTOCOL, WISPS, DEFAULT_RULES, cleanLevels, rulesFor } from './config.js';
 
 const STEP_MS = DT * 1000;
 const LOST_MS = 5000;
@@ -46,6 +46,8 @@ export function createClient({ id, name, watch = false, link }) {
   let lastHeard = null;
   let stepsSinceSend = 0;
   let epoch = null; // Kennung des Gastgebers, wechselt, wenn er neu lädt
+  let rules = DEFAULT_RULES; // Regeln der laufenden Runde
+  let levelsKey = '';
   let welcomeN = 0;
 
   // Uhrenabgleich: Schrittnummer des Gastgebers als Funktion der eigenen Zeit
@@ -92,7 +94,7 @@ export function createClient({ id, name, watch = false, link }) {
     if (snap.ph === PHASE.PLAY && client.maze && !out) {
       for (let i = 0; i < pending.length; i += 1) {
         if (i === pending.length - 1) copyBody(me, mePrev);
-        stepBody(client.maze, me, pending[i].code);
+        stepBody(client.maze, me, pending[i].code, rules);
       }
     }
     renderMe(after);
@@ -114,10 +116,18 @@ export function createClient({ id, name, watch = false, link }) {
     if (!Array.isArray(snap.p) || snap.p.length !== 3) return;
     // Nachzügler aus einer alten Runde oder von vor langer Zeit ignorieren
     if (client.latest && (snap.rn < client.latest.rn || snap.k < client.latest.k - 2 * TICK_RATE)) return;
+    // Einstellungen der Runde: Die eigene Figur muss mit denselben Regeln
+    // vorausberechnet werden, mit denen der Gastgeber rechnet.
+    const key = cleanLevels(snap.o).join('');
+    if (key !== levelsKey) {
+      levelsKey = key;
+      rules = rulesFor(snap.o);
+    }
     const wantSeed = snap.rn > 0 ? snap.sd : null;
     const haveSeed = client.maze ? client.maze.seed : null;
-    if (wantSeed !== haveSeed || (client.latest && snap.rn !== client.latest.rn)) {
-      if (wantSeed !== haveSeed) client.maze = wantSeed === null ? null : buildMaze(wantSeed);
+    const fits = client.maze && client.maze.W === rules.mazeW && client.maze.H === rules.mazeH;
+    if (wantSeed !== haveSeed || (wantSeed !== null && !fits) || (client.latest && snap.rn !== client.latest.rn)) {
+      if (wantSeed !== haveSeed || !fits) client.maze = wantSeed === null ? null : buildMaze(wantSeed, rules.mazeW, rules.mazeH);
       snaps.length = 0;
       seenEvents.clear();
     }
@@ -235,7 +245,7 @@ export function createClient({ id, name, watch = false, link }) {
       if (pending.length > 240) pending.shift();
       copyBody(me, mePrev);
       const live = client.latest && client.latest.ph === PHASE.PLAY && client.latest.p[client.slot][10] === 0;
-      if (live && client.maze) stepBody(client.maze, me, inputCode);
+      if (live && client.maze) stepBody(client.maze, me, inputCode, rules);
       recent.push(inputCode);
       if (recent.length > 8) recent.shift();
       stepsSinceSend += 1;
@@ -301,7 +311,7 @@ export function createClient({ id, name, watch = false, link }) {
   }
 
   const view = {
-    ready: false, phase: PHASE.LOBBY, round: 0, ticksLeft: 0, tick: 0, maze: null, ringDir: 1,
+    ready: false, phase: PHASE.LOBBY, round: 0, ticksLeft: 0, tick: 0, maze: null, ringDir: 1, rules: DEFAULT_RULES,
     slot: -1, prey: -1, hunter: -1,
     players: [0, 1, 2].map((slot) => ({
       slot, x: 0, y: 0, vx: 0, vy: 0, st: 1, ex: false, sp: false, hot: false,
@@ -320,6 +330,7 @@ export function createClient({ id, name, watch = false, link }) {
     view.round = latest.rn;
     view.maze = client.maze;
     view.ringDir = latest.rd;
+    view.rules = rules;
     view.tick = hostTick;
     view.ticksLeft = Math.max(0, latest.pe - hostTick);
     view.prey = client.slot >= 0 ? preyOf(latest.rd, client.slot) : -1;

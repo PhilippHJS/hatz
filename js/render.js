@@ -9,7 +9,7 @@
 // Irrlichter und Effekte. So bleibt der Aufwand pro Bild klein, auch auf
 // großen Bildschirmen ohne schnelle Grafik.
 
-import { WISPS, PLAYER_R, WALL_T, VISION_RADIUS, TICK_RATE, SHIELD_TICKS, RESPAWN_TICKS, RECOVER_AT } from './config.js';
+import { WISPS, PLAYER_R, WALL_T, TICK_RATE, SHIELD_TICKS, RECOVER_AT, DEFAULT_RULES } from './config.js';
 import { PHASE } from './sim.js';
 import { makeRng } from './rng.js';
 
@@ -59,6 +59,7 @@ export function createRenderer(canvas, back, wide) {
   const rings = [];
   let shake = 0;
   let lastJolt = '';
+  let rules = DEFAULT_RULES; // Regeln der Runde, die gerade gezeigt wird
   let flash = 0;
   let flashColor = '#fff';
   let wideShown = null;
@@ -183,7 +184,7 @@ export function createRenderer(canvas, back, wide) {
   }
 
   function ensureScene(m) {
-    const key = `${m.seed}|${cw}|${ch}|${dpr}|${insets.top}|${insets.right}|${insets.bottom}|${insets.left}`;
+    const key = `${m.seed}|${m.W}x${m.H}|${cw}|${ch}|${dpr}|${insets.top}|${insets.right}|${insets.bottom}|${insets.left}`;
     if (key === painted) return;
     painted = key;
     maze = m;
@@ -205,7 +206,7 @@ export function createRenderer(canvas, back, wide) {
   function inSight(me, x, y) {
     const dx = me.x - x;
     const dy = me.y - y;
-    return dx * dx + dy * dy <= VISION_RADIUS * VISION_RADIUS;
+    return dx * dx + dy * dy <= rules.vision * rules.vision;
   }
 
   function blobPath(x, y, r, lobes, wob, now) {
@@ -322,7 +323,7 @@ export function createRenderer(canvas, back, wide) {
     ctx.stroke();
     ctx.strokeStyle = THEME.moon;
     ctx.beginPath();
-    ctx.arc(x, y, r * 1.7, -Math.PI / 2, -Math.PI / 2 + TAU * Math.min(1, p.dead / RESPAWN_TICKS));
+    ctx.arc(x, y, r * 1.7, -Math.PI / 2, -Math.PI / 2 + TAU * Math.min(1, p.dead / rules.respawnTicks));
     ctx.stroke();
   }
 
@@ -542,6 +543,7 @@ export function createRenderer(canvas, back, wide) {
       return;
     }
     ensureScene(view.maze);
+    rules = view.rules || DEFAULT_RULES;
 
     const me = !spectate && view.slot >= 0 ? view.players[view.slot] : null;
     // Das ganze Feld sieht, wer gerade aussetzt, und jeder am Rundenende.
@@ -578,7 +580,7 @@ export function createRenderer(canvas, back, wide) {
     }
 
     // Sichtkreise: nur dort die helle Fassung des Gartens zeigen
-    const R = VISION_RADIUS * s;
+    const R = rules.vision * s;
     if (!whole) {
       const lights = me ? [me] : view.players.filter((p) => p.dead === 0);
       // nichts davon reicht über den Garten hinaus
@@ -595,10 +597,10 @@ export function createRenderer(canvas, back, wide) {
       ctx.clip();
       for (const p of lights) {
         // nur den Ausschnitt der hellen Fassung übertragen, den der Kreis braucht
-        const px0 = Math.max(0, Math.floor((pad + (p.x - VISION_RADIUS) * s) * dpr) - 2);
-        const py0 = Math.max(0, Math.floor((pad + (p.y - VISION_RADIUS) * s) * dpr) - 2);
-        const px1 = Math.min(lit.width, Math.ceil((pad + (p.x + VISION_RADIUS) * s) * dpr) + 2);
-        const py1 = Math.min(lit.height, Math.ceil((pad + (p.y + VISION_RADIUS) * s) * dpr) + 2);
+        const px0 = Math.max(0, Math.floor((pad + (p.x - rules.vision) * s) * dpr) - 2);
+        const py0 = Math.max(0, Math.floor((pad + (p.y - rules.vision) * s) * dpr) - 2);
+        const px1 = Math.min(lit.width, Math.ceil((pad + (p.x + rules.vision) * s) * dpr) + 2);
+        const py1 = Math.min(lit.height, Math.ceil((pad + (p.y + rules.vision) * s) * dpr) + 2);
         if (px1 > px0 && py1 > py0) {
           ctx.drawImage(lit, px0, py0, px1 - px0, py1 - py0, ox - pad + px0 / dpr, oy - pad + py0 / dpr, (px1 - px0) / dpr, (py1 - py0) / dpr);
         }

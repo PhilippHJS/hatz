@@ -3,7 +3,7 @@
 //
 // Jeder jagt genau einen Mitspieler und wird vom anderen gejagt. Wer seine
 // Beute berührt, bekommt einen Punkt, die Beute verliert einen
-// Punkt. Sie setzt drei Sekunden aus, sieht so lange das ganze Feld und steigt
+// Punkt. Sie setzt kurz aus, sieht so lange das ganze Feld und steigt
 // dann an einer entfernten Stelle wieder ein. Alle sind gleich schnell, nur
 // wer seine Beute gerade im Sichtkreis hat, läuft etwas schneller. Sonst käme
 // nie jemand heran.
@@ -12,7 +12,7 @@ import { buildMaze, cellAt, cellX, cellY, pathDist } from './maze.js';
 import { makeRng } from './rng.js';
 import { newBody, stepBody } from './physics.js';
 import {
-  CATCH_DIST, SHIELD_TICKS, RESPAWN_TICKS, COUNTDOWN_TICKS, ROUND_SECONDS, TICK_RATE, VISION_RADIUS,
+  CATCH_DIST, SHIELD_TICKS, COUNTDOWN_TICKS, ROUND_SECONDS, TICK_RATE, DEFAULT_LEVELS, DEFAULT_RULES, cleanLevels, rulesFor,
 } from './config.js';
 
 export const PHASE = { LOBBY: 0, COUNTDOWN: 1, PLAY: 2, END: 3 };
@@ -29,6 +29,8 @@ export function createSim() {
     maze: null,
     rng: null,
     ringDir: 1,
+    levels: DEFAULT_LEVELS.slice(), // Einstellungen der laufenden Runde
+    rules: DEFAULT_RULES,
     // dead: Schritte bis zum Wiedereinstieg, 0 heißt im Spiel
     players: [0, 1, 2].map((slot) => ({ slot, body: newBody(0, 0), score: 0, shield: 0, dead: 0, tp: 0 })),
     events: [],
@@ -40,11 +42,11 @@ export const preyOf = (ringDir, slot) => (slot + ringDir + 3) % 3;
 export const hunterOf = (ringDir, slot) => (slot - ringDir + 3) % 3;
 
 // Sieht a den Mitspieler b? Beide müssen im Spiel sein und b im Sichtkreis von a.
-export function sees(a, b) {
+export function sees(a, b, radius) {
   if (a.dead > 0 || b.dead > 0) return false;
   const dx = a.body.x - b.body.x;
   const dy = a.body.y - b.body.y;
-  return dx * dx + dy * dy <= VISION_RADIUS * VISION_RADIUS;
+  return dx * dx + dy * dy <= radius * radius;
 }
 
 function place(sim, player, cell) {
@@ -53,9 +55,11 @@ function place(sim, player, cell) {
   player.tp = tp;
 }
 
-export function startRound(sim, seed, seconds = ROUND_SECONDS) {
+export function startRound(sim, seed, seconds = ROUND_SECONDS, levels = DEFAULT_LEVELS) {
   sim.seed = seed >>> 0;
-  sim.maze = buildMaze(sim.seed);
+  sim.levels = cleanLevels(levels);
+  sim.rules = rulesFor(sim.levels);
+  sim.maze = buildMaze(sim.seed, sim.rules.mazeW, sim.rules.mazeH);
   sim.rng = makeRng(sim.seed ^ 0x9e3779b9);
   sim.round += 1;
   sim.ringDir = sim.rng() < 0.5 ? 1 : -1;
@@ -126,12 +130,12 @@ export function stepSim(sim, inputs) {
   // Jagdfieber: Wer seine Beute sieht, ist in diesem Schritt schneller.
   for (const hunter of sim.players) {
     const prey = sim.players[preyOf(sim.ringDir, hunter.slot)];
-    hunter.body.hot = prey.shield === 0 && sees(hunter, prey);
+    hunter.body.hot = prey.shield === 0 && sees(hunter, prey, sim.rules.vision);
   }
   for (const player of sim.players) {
     if (player.dead > 0) continue;
     const list = inputs[player.slot];
-    if (list) for (const code of list) stepBody(sim.maze, player.body, code);
+    if (list) for (const code of list) stepBody(sim.maze, player.body, code, sim.rules);
   }
 
   const caught = [];
@@ -149,7 +153,7 @@ export function stepSim(sim, inputs) {
     sim.nextEvent += 1;
   }
   for (const [, prey] of caught) {
-    prey.dead = RESPAWN_TICKS;
+    prey.dead = sim.rules.respawnTicks;
     prey.body.vx = 0;
     prey.body.vy = 0;
     prey.body.sp = false;

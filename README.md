@@ -23,11 +23,27 @@ Das Gerät des Gastgebers führt den Spielstand. Seine Seite muss offen bleiben,
 - Sprinten kostet Ausdauer, der Balken unter der eigenen Figur zeigt sie an. Wer sich leer sprintet, muss kurz verschnaufen.
 - Nach Ablauf der Zeit gewinnt der höchste Punktestand. Jede Runde hat ein neues Labyrinth.
 
+## Einstellungen
+
+Der Gastgeber stellt sie im Raum ein, die Mitspieler sehen sie. Sie gelten ab der nächsten Runde, und der Browser merkt sie sich für den nächsten Raum. Jede hat drei Stufen, die mittlere ist der Normalfall.
+
+| Einstellung | Stufen | Wirkung |
+| --- | --- | --- |
+| Dauer | 2, 3, 5 Minuten | Länge einer Runde |
+| Tempo | langsam, normal, schnell | Gehen und Sprinten mal 0,8 / 1 / 1,25 |
+| Sichtkreis | klein, mittel, groß | Radius 2,5 / 3,5 / 5 Felder |
+| Labyrinth | klein, mittel, groß | 16 × 10, 20 × 12 oder 24 × 14 Felder |
+| Ausdauer | wenig, normal, viel | volle Ausdauer reicht 1,4 / 2,2 / 3,4 Sekunden Sprint |
+| Auszeit | 1, 3, 5 Sekunden | so lange setzt aus, wer gefangen wurde |
+| Jagdfieber | aus, normal, stark | wer seine Beute sieht, läuft 0 / 15 / 30 % schneller |
+
+Mit den Bots gemessen: Ein großer Sichtkreis und abgeschaltetes Jagdfieber machen die Flucht leichter, es wird deutlich seltener gefangen. Ein kleiner Sichtkreis, hohes Tempo und starkes Jagdfieber machen die Runde hektischer.
+
 ## Technik
 
 Eine statische Seite ohne Server und ohne Build-Schritt.
 
-- `js/config.js`: alle Stellschrauben (Tempo, Ausdauer, Sichtweite, Rundenlänge)
+- `js/config.js`: alle Stellschrauben und die Stufen der Einstellungen
 - `js/maze.js`, `js/physics.js`, `js/sim.js`, `js/bots.js`: Labyrinth, Bewegung, Regeln und Bots, ohne Browser-Abhängigkeiten
 - `js/host.js`, `js/client.js`: Gastgeber und die Sicht eines Geräts auf das Spiel
 - `js/net.js`: Verbindung zwischen den Geräten und Verschlüsselung

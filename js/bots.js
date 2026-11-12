@@ -39,7 +39,7 @@ export function createBot(slot, seed) {
     const dHunter = hunterP.dead === 0 ? pathDist(m, myCell, hunterCell) : 99;
 
     // Den Jäger bemerkt der Bot erst in seinem Sichtkreis, und dann mit Schrecksekunde.
-    const spotted = sees(meP, hunterP);
+    const spotted = sees(meP, hunterP, sim.rules.vision);
     if (spotted && bot.alarm === 0) bot.startle = 14 + rng.int(12);
     if (spotted) bot.alarm = Math.round(1.6 * TICK_RATE);
     else if (bot.alarm > 0) bot.alarm -= 1;

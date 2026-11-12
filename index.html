@@ -53,15 +53,15 @@
       </div>
     </div>
 
-    <fieldset id="length">
-      <legend>Rundenlänge</legend>
-      <label><input type="radio" name="seconds" value="120"><span>2 Minuten</span></label>
-      <label><input type="radio" name="seconds" value="180"><span>3 Minuten</span></label>
-      <label><input type="radio" name="seconds" value="300"><span>5 Minuten</span></label>
-    </fieldset>
-
     <button type="button" class="primary" id="b-start">Runde starten</button>
     <p class="note" id="room-note" role="status"></p>
+
+    <fieldset id="settings">
+      <legend>Einstellungen</legend>
+      <p id="settings-hint"></p>
+      <div id="options"></div>
+      <button type="button" class="quiet" id="b-reset" hidden>Alles auf normal stellen</button>
+    </fieldset>
 
     <details id="rules">
       <summary>So wird gespielt</summary>
@@ -69,7 +69,7 @@
         <li>Der Pfeil an deiner Figur zeigt zu deiner Beute. Berühre sie: ein Punkt für dich, einer weniger für sie.</li>
         <li>Andere siehst du nur im Sichtkreis um deine Figur. Dein Jäger taucht erst auf, wenn er hineinkommt.</li>
         <li>Wer seine Beute im Sichtkreis hat, läuft schneller. Lauf aus dem Kreis heraus, um zu entkommen.</li>
-        <li>Wer gefangen wird, setzt drei Sekunden aus und sieht so lange das ganze Feld.</li>
+        <li>Wer gefangen wird, setzt kurz aus und sieht so lange das ganze Feld.</li>
         <li>Sprinten kostet Ausdauer. Wer sich leer sprintet, muss kurz verschnaufen.</li>
       </ul>
       <p>Bewegen mit WASD oder den Pfeiltasten, sprinten mit der Leertaste oder Shift.</p>

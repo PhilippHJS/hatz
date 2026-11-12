@@ -3,8 +3,7 @@
 // auf dieselben Zahlen kommen, deshalb hier nur Grundrechenarten und Wurzeln.
 
 import {
-  DT, HIT_R, WALK_SPEED, SPRINT_SPEED, ACCEL, HUNT_BOOST,
-  SPRINT_SECONDS, REGEN_SECONDS, REGEN_DELAY, RECOVER_AT,
+  DT, HIT_R, WALK_SPEED, SPRINT_SPEED, ACCEL, REGEN_SECONDS, REGEN_DELAY, RECOVER_AT, DEFAULT_RULES,
 } from './config.js';
 
 const DIAG = 0.7071067811865476;
@@ -131,7 +130,8 @@ function sidestep(m, b, dx, dy) {
   return 0;
 }
 
-export function stepBody(m, b, code) {
+// `rules` sind die Regeln der Runde (Tempo, Jagdfieber, Ausdauer).
+export function stepBody(m, b, code, rules = DEFAULT_RULES) {
   let wx = inputX(code);
   let wy = inputY(code);
   if (wx !== 0 && wy !== 0) {
@@ -162,7 +162,7 @@ export function stepBody(m, b, code) {
 
   const moving = wx !== 0 || wy !== 0;
   const sprinting = inputSprint(code) && moving && !b.ex && b.st > 0;
-  const speed = (sprinting ? SPRINT_SPEED : WALK_SPEED) * (b.hot ? HUNT_BOOST : 1) * (wx !== 0 && wy !== 0 ? DIAG : 1);
+  const speed = (sprinting ? SPRINT_SPEED : WALK_SPEED) * rules.speed * (b.hot ? rules.huntBoost : 1) * (wx !== 0 && wy !== 0 ? DIAG : 1);
   b.vx += (wx * speed - b.vx) * ACCEL;
   b.vy += (wy * speed - b.vy) * ACCEL;
   if (!moving && b.vx * b.vx + b.vy * b.vy < 1e-4) {
@@ -178,9 +178,10 @@ export function stepBody(m, b, code) {
   // Wer gegen eine Hecke drückt, kommt nicht voran und verbraucht auch nichts.
   const dx = b.x - fromX;
   const dy = b.y - fromY;
-  const running = sprinting && dx * dx + dy * dy > MIN_RUN * MIN_RUN;
+  const minRun = MIN_RUN * rules.speed;
+  const running = sprinting && dx * dx + dy * dy > minRun * minRun;
   if (running) {
-    b.st -= DT / SPRINT_SECONDS;
+    b.st -= DT / rules.sprintSeconds;
     b.rw = REGEN_DELAY;
     if (b.st <= 0) {
       b.st = 0;

@@ -9,20 +9,21 @@ import { createSim, startRound, backToLobby, stepSim, PHASE } from './sim.js';
 import { createBot } from './bots.js';
 import { IDLE } from './physics.js';
 import { randomSeed } from './rng.js';
-import { DT, TICK_RATE, PROTOCOL, ROUND_SECONDS, WISPS } from './config.js';
+import { DT, TICK_RATE, PROTOCOL, ROUND_SECONDS, WISPS, SETTINGS, cleanLevels } from './config.js';
 
 const OFFLINE_MS = 5000; // ohne Lebenszeichen gilt ein Mitspieler als weg
 const FREE_MS = 20000; // dann wird sein Platz in der Lobby wieder frei
 const QUEUE_MAX = 40;
 
-export function createHost({ seconds = ROUND_SECONDS, autoRestart = false, onChange = () => {} } = {}) {
+export function createHost({ seconds = ROUND_SECONDS, levels, autoRestart = false, onChange = () => {} } = {}) {
   const sim = createSim();
   const lines = [];
   const slots = [0, 1, 2].map((index) => ({
     index, kind: 'bot', id: null, name: WISPS[index].name, online: true, heard: 0,
     queue: [], recvSeq: 0, ackSeq: 0, bot: null,
   }));
-  const host = { sim, slots, seconds };
+  // levels: die Einstellungen für die nächste Runde, je eine Stufe
+  const host = { sim, slots, seconds, levels: cleanLevels(levels) };
   const epoch = Math.floor(Math.random() * 2147483647) + 1; // erkennt, wenn der Gastgeber neu geladen hat
   let version = 1;
   let clock = null; // Zeit des letzten Schritts in ms
@@ -60,6 +61,7 @@ export function createHost({ seconds = ROUND_SECONDS, autoRestart = false, onCha
       phase: sim.phase,
       round: sim.round,
       seconds: host.seconds,
+      levels: host.levels,
       slots: slots.map((slot) => ({ name: slot.name, kind: slot.kind, id: slot.id, online: slot.online })),
     };
   }
@@ -74,6 +76,7 @@ export function createHost({ seconds = ROUND_SECONDS, autoRestart = false, onCha
       rn: sim.round,
       sd: sim.seed,
       rd: sim.ringDir,
+      o: sim.levels,
       p: sim.players.map((player) => {
         const b = player.body;
         return [b.x, b.y, b.vx, b.vy, b.st, (b.ex ? 1 : 0) | (b.sp ? 2 : 0) | (b.hot ? 4 : 0), b.rw, player.score, player.shield, player.tp, player.dead];
@@ -87,7 +90,7 @@ export function createHost({ seconds = ROUND_SECONDS, autoRestart = false, onCha
 
   host.start = () => {
     if (sim.phase === PHASE.COUNTDOWN || sim.phase === PHASE.PLAY) return;
-    startRound(sim, randomSeed(), host.seconds);
+    startRound(sim, randomSeed(), host.seconds, host.levels);
     for (const slot of slots) {
       slot.bot = createBot(slot.index, sim.seed);
       slot.queue.length = 0;
@@ -103,6 +106,16 @@ export function createHost({ seconds = ROUND_SECONDS, autoRestart = false, onCha
 
   host.setSeconds = (value) => {
     host.seconds = value;
+    changed();
+  };
+
+  // Stellt eine Einstellung auf eine Stufe. Gilt ab der nächsten Runde.
+  host.setLevel = (key, level) => {
+    const index = SETTINGS.findIndex((setting) => setting.key === key);
+    if (index < 0) return;
+    const next = host.levels.slice();
+    next[index] = level;
+    host.levels = cleanLevels(next);
     changed();
   };
 

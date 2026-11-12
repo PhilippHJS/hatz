@@ -8,15 +8,15 @@ import { createClient } from '../js/client.js';
 import { packInput, IDLE } from '../js/physics.js';
 import { PHASE, hunterOf } from '../js/sim.js';
 import { makeRng } from '../js/rng.js';
-import { COUNTDOWN_TICKS, TICK_RATE, RESPAWN_TICKS } from '../js/config.js';
+import { COUNTDOWN_TICKS, TICK_RATE, RESPAWN_TICKS, SETTINGS, rulesFor } from '../js/config.js';
 
 // Eine Welt mit eigener Uhr. `net` beschreibt die Leitung der Mitspieler.
-function world({ net, guests = 2, seconds = 20, seed = 1 }) {
+function world({ net, guests = 2, seconds = 20, seed = 1, levels }) {
   const rng = makeRng(seed);
   let now = 1000;
   const queue = []; // { at, fn }
   const later = (ms, fn) => queue.push({ at: now + ms, fn });
-  const host = createHost({ seconds });
+  const host = createHost({ seconds, levels });
   const loop = createLoopback(host, () => now);
 
   // Leitung übers "Netz": Verlust, Laufzeit mit Schwankung, Doppelte
@@ -241,4 +241,63 @@ test('Vierter Mitspieler: Raum ist voll', () => {
   w.run(2500);
   const states = w.clients.map((c) => c.status).sort();
   assert.deepEqual(states, ['full', 'in', 'in', 'in']);
+});
+
+test('Einstellungen: kommen bei allen an, die Vorhersage rechnet mit denselben Regeln', () => {
+  // schnell, großer Sichtkreis, kleines Labyrinth, wenig Ausdauer, kurze Auszeit, starkes Jagdfieber
+  const levels = SETTINGS.map((setting) => ({ speed: 2, vision: 2, maze: 0, stamina: 0, respawn: 0, fever: 2 }[setting.key]));
+  const w = world({ net: { delay: 50, jitter: 20, loss: 0, dup: 0 }, seconds: 8, seed: 31, levels });
+  w.run(2500);
+  for (const c of w.clients) assert.deepEqual(c.lobby.levels, levels, 'im Raum sehen alle die Einstellungen');
+  w.host.start();
+  w.run((COUNTDOWN_TICKS / TICK_RATE) * 1000 + 400);
+  for (const c of w.clients) {
+    const view = c.view(w.now());
+    assert.equal(view.maze.W, 16);
+    assert.equal(view.maze.H, 10);
+    assert.deepEqual(view.rules, rulesFor(levels));
+  }
+  const rng = makeRng(8);
+  let worst = 0;
+  w.run(5000, (t) => {
+    if (t % 230 === 0) for (let i = 0; i < w.inputs.length; i += 1) w.inputs[i] = packInput(rng.int(3) - 1, rng.int(3) - 1, rng() < 0.6);
+    for (const c of w.clients) worst = Math.max(worst, c.debug().err);
+  });
+  // Abweichungen entstehen wie sonst nur, wenn das Jagdfieber umschaltet oder jemand gefangen wird.
+  assert.ok(worst < 0.2, `Abweichung bis ${worst.toFixed(3)} Felder`);
+  w.inputs.fill(IDLE);
+  w.run(1200);
+  for (const c of w.clients) {
+    const mine = c.debug().me;
+    const truth = w.host.sim.players[c.slot].body;
+    assert.ok(Math.hypot(mine.x - truth.x, mine.y - truth.y) < 1e-9, `Platz ${c.slot} steht daneben`);
+  }
+
+  // Der Gastgeber stellt um: gilt erst für die nächste Runde, dann aber bei allen.
+  w.run(3000);
+  assert.equal(w.host.sim.phase, PHASE.END);
+  w.host.setLevel('maze', 2);
+  w.host.setLevel('speed', 0);
+  w.host.setLevel('gibtesnicht', 2);
+  w.host.setLevel('vision', 9);
+  w.run(1500);
+  for (const c of w.clients) {
+    assert.equal(c.view(w.now()).maze.W, 16, 'die alte Runde bleibt, wie sie war');
+    assert.deepEqual(c.lobby.levels, w.host.levels);
+  }
+  assert.equal(w.host.levels[SETTINGS.findIndex((setting) => setting.key === 'vision')], 1, 'ungültige Stufe wird zur mittleren');
+  w.host.start();
+  w.run((COUNTDOWN_TICKS / TICK_RATE) * 1000 + 600);
+  w.inputs.fill(packInput(1, 1, false));
+  w.run(1500);
+  w.inputs.fill(IDLE);
+  w.run(1200);
+  for (const c of w.clients) {
+    const view = c.view(w.now());
+    assert.equal(view.maze.W, 24);
+    assert.equal(view.rules.speed, 0.8);
+    const mine = c.debug().me;
+    const truth = w.host.sim.players[c.slot].body;
+    assert.ok(Math.hypot(mine.x - truth.x, mine.y - truth.y) < 1e-9, `zweite Runde: Platz ${c.slot} steht daneben`);
+  }
 });

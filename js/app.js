@@ -7,7 +7,7 @@ import { createRenderer } from './render.js';
 import { createKeyboard } from './input.js';
 import { createHostNet, createGuestNet, makeRoomCode, cleanCode, makeId, supported, DEFAULT_RELAYS } from './net.js';
 import { PHASE, ranking } from './sim.js';
-import { WISPS, TICK_RATE, ROUND_SECONDS } from './config.js';
+import { WISPS, TICK_RATE, ROUND_SECONDS, ROUND_LENGTHS, SETTINGS, DEFAULT_LEVELS, cleanLevels } from './config.js';
 
 const $ = (selector) => document.querySelector(selector);
 const now = () => performance.now();
@@ -71,8 +71,15 @@ function setUrl(code) {
 
 function openRoom(code) {
   const name = load(localStorage, 'hatz-name') || 'Gastgeber';
-  const seconds = Number(load(localStorage, 'hatz-seconds')) || ROUND_SECONDS;
-  const host = createHost({ seconds });
+  const saved = Number(load(localStorage, 'hatz-seconds'));
+  const seconds = ROUND_LENGTHS.includes(saved) ? saved : ROUND_SECONDS;
+  let levels = null;
+  try {
+    levels = JSON.parse(load(localStorage, 'hatz-levels') || 'null');
+  } catch {
+    levels = null;
+  }
+  const host = createHost({ seconds, levels });
   const loop = createLoopback(host, now);
   let client = null;
   const link = loop.connect(myId, (msg) => client.receive(msg, now()));
@@ -215,11 +222,29 @@ $('#b-start').addEventListener('click', () => {
 });
 $('#b-leave').addEventListener('click', leaveRoom);
 $('#b-quit').addEventListener('click', leaveRoom);
-$('#length').addEventListener('change', (event) => {
-  if (!session || !session.host || event.target.name !== 'seconds') return;
-  const seconds = Number(event.target.value);
-  session.host.setSeconds(seconds);
-  save(localStorage, 'hatz-seconds', String(seconds));
+// Einstellungen: die Rundenlänge und alles aus SETTINGS, je drei Stufen
+const OPTION_ROWS = [{ key: 'length', label: 'Dauer', options: ['2 min', '3 min', '5 min'] }, ...SETTINGS];
+$('#options').innerHTML = OPTION_ROWS.map((row) => `<div class="opt" role="radiogroup" aria-label="${row.label}"><span class="name">${row.label}</span>${
+  row.options.map((text, level) => `<label><input type="radio" name="opt-${row.key}" value="${level}"><span>${text}</span></label>`).join('')
+}</div>`).join('');
+
+function keepSettings(host) {
+  save(localStorage, 'hatz-seconds', String(host.seconds));
+  save(localStorage, 'hatz-levels', JSON.stringify(host.levels));
+}
+$('#options').addEventListener('change', (event) => {
+  if (!session || !session.host || !event.target.name.startsWith('opt-')) return;
+  const key = event.target.name.slice(4);
+  const level = Number(event.target.value);
+  if (key === 'length') session.host.setSeconds(ROUND_LENGTHS[level]);
+  else session.host.setLevel(key, level);
+  keepSettings(session.host);
+});
+$('#b-reset').addEventListener('click', () => {
+  if (!session || !session.host) return;
+  session.host.setSeconds(ROUND_SECONDS);
+  for (const setting of SETTINGS) session.host.setLevel(setting.key, 1);
+  keepSettings(session.host);
 });
 $('#b-copy').addEventListener('click', async () => {
   const input = $('#f-link');
@@ -340,9 +365,15 @@ function updateRoom(view) {
     $('#f-link').value = v;
   });
   const seconds = lobby ? lobby.seconds : ROUND_SECONDS;
-  put('seconds', `${seconds}|${isHost}`, () => {
-    for (const radio of document.querySelectorAll('#length input')) radio.checked = Number(radio.value) === seconds;
-    $('#length').disabled = !isHost;
+  const levels = cleanLevels(lobby ? lobby.levels : DEFAULT_LEVELS);
+  const chosen = [Math.max(0, ROUND_LENGTHS.indexOf(seconds)), ...levels];
+  put('options', `${chosen}|${isHost}`, () => {
+    OPTION_ROWS.forEach((row, i) => {
+      for (const radio of document.querySelectorAll(`#options input[name="opt-${row.key}"]`)) radio.checked = Number(radio.value) === chosen[i];
+    });
+    $('#settings').disabled = !isHost;
+    $('#settings-hint').textContent = isHost ? 'Gelten ab der nächsten Runde.' : 'Der Gastgeber stellt sie ein.';
+    $('#b-reset').hidden = !isHost || chosen.every((level) => level === 1);
   });
   put('start', `${isHost}|${ended}`, () => {
     $('#b-start').hidden = !isHost;

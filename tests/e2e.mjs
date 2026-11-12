@@ -165,6 +165,18 @@ async function run(mode) {
   }
   check((await host.innerHTML('#slots')).includes('Cem &lt;b&gt;'), 'Namen werden als Text gezeigt');
 
+  // Gastgeber stellt die Ausdauer auf "viel", die Gäste sehen es, können aber nichts ändern.
+  await host.evaluate(() => localStorage.removeItem('hatz-levels'));
+  await host.click('#options label:has(input[name="opt-stamina"][value="2"])');
+  await until(g1, () => {
+    const radio = document.querySelector('#options input[name="opt-stamina"][value="2"]');
+    return radio.checked && document.querySelector('#settings').disabled;
+  });
+  check(true, 'Gast sieht die Einstellung des Gastgebers, ausgegraut');
+  await g1.click('#options label:has(input[name="opt-stamina"][value="0"])', { force: true }).catch(() => {});
+  await sleep(300);
+  check((await host.evaluate(() => window.__hatz.session.host.levels[3])) === 2, 'Gast kann die Einstellung nicht ändern');
+
   await host.click('#b-start');
   await until(host, () => document.body.dataset.screen === 'game');
   for (const page of all) await until(page, () => document.body.dataset.screen === 'game');
@@ -173,6 +185,8 @@ async function run(mode) {
   for (const page of all) await until(page, (phase) => window.__hatz.view().phase === phase, PLAY);
   const seeds = await Promise.all(all.map(async (page) => (await state(page)).seed));
   check(seeds[0] !== null && seeds.every((seed) => seed === seeds[0]), 'alle haben dasselbe Labyrinth');
+  const stamina = await Promise.all(all.map((page) => page.evaluate(() => window.__hatz.view().rules.sprintSeconds)));
+  check(stamina.every((value) => value === 3.4), `alle spielen mit der eingestellten Ausdauer (${stamina})`);
 
   // Jeder läuft los. Die eigene Figur muss sich sofort bewegen und beim Gastgeber ankommen.
   const before = await truth(host);
@@ -287,13 +301,13 @@ async function run(mode) {
     // Ein Vermittler fällt aus: Das Spiel läuft über den anderen weiter.
     await brokers[0].stop();
     await sleep(800);
+    // in Richtungen laufen, in denen keine Hecke im Weg steht (und nicht während einer Auszeit)
+    await until(g1, (slot) => window.__hatz.view().players[slot].dead === 0, s1.slot, 8000);
     const b = await truth(host);
-    // Die Figur steht nach dem Fang in einer Ecke unten rechts, also nach oben links.
-    await g1.keyboard.down('KeyW');
-    await g1.keyboard.down('KeyA');
+    const away = await openKeys(g1);
+    for (const key of away) await g1.keyboard.down(key);
     await sleep(1200);
-    await g1.keyboard.up('KeyW');
-    await g1.keyboard.up('KeyA');
+    for (const key of away) await g1.keyboard.up(key);
     await sleep(700);
     const a = await truth(host);
     const moved = Math.hypot(a.players[s1.slot].x - b.players[s1.slot].x, a.players[s1.slot].y - b.players[s1.slot].y);
@@ -354,8 +368,10 @@ try {
 
   await sleep(300);
   check(overheard.length > 50, `Mitleser hat ${overheard.length} Nachrichten gesehen`);
-  const leaked = overheard.find((entry) => /Anna|Ben|Cem|lobby|welcome|hello/.test(entry.text) || /Anna|Ben|Cem/.test(entry.topic));
-  check(!leaked, 'Mitleser findet weder Namen noch Klartext');
+  // Nur Muster ab vier Zeichen: Drei Buchstaben wie "Ben" tauchen in tausenden
+  // Zufallsbytes der verschlüsselten Daten gelegentlich zufällig auf.
+  const leaked = overheard.find((entry) => /Anna|Cem <|"name"|"t":"|lobby|welcome|hello/.test(entry.text) || /Anna|Ben|Cem/.test(entry.topic));
+  check(!leaked, `Mitleser findet weder Namen noch Klartext${leaked ? ` (${leaked.topic})` : ''}`);
 } catch (err) {
   problems.push(`Abbruch: ${err.stack || err}`);
   // Was sehen die Fenster in diesem Moment?

@@ -1,6 +1,7 @@
 // Tastatur. Gelesen wird die Lage der Taste, nicht ihr Buchstabe, damit WASD
 // auf jeder Tastatur an derselben Stelle liegt. Drückt man links und rechts
-// zugleich, gilt die zuletzt gedrückte Richtung.
+// zugleich, gilt die zuletzt gedrückte Richtung. E löst das Item auf Vorrat
+// aus, und zwar einmal je Tastendruck.
 
 import { packInput } from './physics.js';
 
@@ -10,6 +11,7 @@ const KEYS = {
   KeyA: 'left', ArrowLeft: 'left',
   KeyD: 'right', ArrowRight: 'right',
   Space: 'sprint', ShiftLeft: 'sprint', ShiftRight: 'sprint',
+  KeyE: 'use', Enter: 'use',
 };
 
 export function createKeyboard(target = window) {
@@ -18,6 +20,7 @@ export function createKeyboard(target = window) {
   let counter = 0;
   let enabled = false;
   let moved = false;
+  let use = false; // E gedrückt, aber noch nicht abgeholt
 
   const isDown = (action) => {
     for (const value of held.values()) if (value === action) return true;
@@ -33,6 +36,10 @@ export function createKeyboard(target = window) {
     if (!action || !enabled || typing(event) || event.ctrlKey || event.metaKey || event.altKey) return;
     event.preventDefault();
     if (event.repeat || held.has(event.code)) return;
+    if (action === 'use') {
+      use = true;
+      return;
+    }
     held.set(event.code, action);
     counter += 1;
     pressedAt[action] = counter;
@@ -53,9 +60,15 @@ export function createKeyboard(target = window) {
   };
 
   return {
-    code: () => (enabled ? packInput(axis('left', 'right'), axis('up', 'down'), isDown('sprint')) : packInput(0, 0, false)),
+    code: () => {
+      if (!enabled) return packInput(0, 0, false);
+      const fire = use;
+      use = false;
+      return packInput(axis('left', 'right'), axis('up', 'down'), isDown('sprint'), fire);
+    },
     setEnabled(on) {
       if (enabled && !on) release();
+      if (!on) use = false;
       enabled = on;
     },
     hasMoved: () => moved,

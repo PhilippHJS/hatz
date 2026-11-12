@@ -2,7 +2,7 @@
 
 Eine Ringjagd für genau drei im Browser, jeder am eigenen Rechner und ohne Anmeldung. Du jagst einen Mitspieler, der andere jagt dich.
 
-Der Stand ist ein spielbares Grundgerüst: ein Modus (Ringjagd), noch ohne Items.
+Bisher gibt es einen Modus, die Ringjagd, mit Items und Einstellungen.
 
 ## So wird gespielt
 
@@ -10,7 +10,7 @@ Der Stand ist ein spielbares Grundgerüst: ein Modus (Ringjagd), noch ohne Items
 2. Den Einladungslink an die beiden anderen schicken.
 3. Der Gastgeber startet die Runde. Freie Plätze übernehmen Bots, alleine ausprobieren geht also auch.
 
-Bewegen mit WASD oder den Pfeiltasten, sprinten mit der Leertaste oder Shift.
+Bewegen mit WASD oder den Pfeiltasten, sprinten mit der Leertaste oder Shift, Item auslösen mit E.
 
 Das Gerät des Gastgebers führt den Spielstand. Seine Seite muss offen bleiben, solange gespielt wird. Wer neu lädt oder kurz die Verbindung verliert, landet wieder auf seinem Platz, bis dahin vertritt ihn ein Bot.
 
@@ -23,13 +23,34 @@ Das Gerät des Gastgebers führt den Spielstand. Seine Seite muss offen bleiben,
 - Sprinten kostet Ausdauer, der Balken unter der eigenen Figur zeigt sie an. Wer sich leer sprintet, muss kurz verschnaufen.
 - Nach Ablauf der Zeit gewinnt der höchste Punktestand. Jede Runde hat ein neues Labyrinth.
 
+## Items
+
+In den Einstellungen lassen sich Items an- und ausschalten, ein neuer Raum beginnt mit Items. Dann liegen leuchtende Kisten im Labyrinth, die auch im Dunkeln zu sehen sind. Wer eine berührt und nichts auf Vorrat hat, bekommt ein zufälliges Item und löst es mit **E** aus. Was die anderen auf Vorrat haben, sieht man nicht. Nach ein paar Sekunden erscheint irgendwo eine neue Kiste.
+
+Aufholhilfe: Wer vorne liegt, bekommt eher schwache Items, wer hinten liegt, eher starke (der Stern kommt beim Letzten etwa achtmal so oft wie beim Ersten).
+
+| Item | Wirkung | Dauer |
+| --- | --- | --- |
+| Mondschein | Du siehst das ganze Feld. | 6 s |
+| Tarnkappe | Niemand sieht dich, auch der Pfeil deines Jägers verschwindet. Fangen und gefangen werden geht weiter. | 6 s |
+| Rakete | Du fliegst durch Hecken. Endet der Flug in einer Hecke, landest du in der Mitte deines Feldes. | 2,5 s |
+| Stern | Du jagst beide anderen und kannst nicht gefangen werden. | 6 s |
+| Blitz | Alle anderen stehen still, egal wo sie sind. | 1 s |
+| Kehrtwende | Der Ring dreht sich um: Wer dich gejagt hat, ist jetzt deine Beute. | 8 s |
+| Hecke | Hinter dir wächst der Gang zu. | 5 s |
+| Falle | Unsichtbare Falle an deiner Stelle. Wer als Nächstes darüberläuft, steckt fest. | 2 s fest |
+| Falsche Fährte | Der Pfeil deines Jägers zeigt auf eine falsche Stelle. | 8 s |
+
+Was andere betrifft, wird allen angesagt, Stern, Blitz und Kehrtwende zusätzlich groß eingeblendet. Falle und falsche Fährte bleiben geheim: Davon erfährt nur, wer sie benutzt, und wer hineintappt oder hereinfällt. Wie lange eine Wirkung noch läuft, steht unten neben dem Vorrat.
+
 ## Einstellungen
 
-Der Gastgeber stellt sie im Raum ein, die Mitspieler sehen sie. Sie gelten ab der nächsten Runde, und der Browser merkt sie sich für den nächsten Raum. Jede hat drei Stufen, die mittlere ist der Normalfall.
+Der Gastgeber stellt sie im Raum ein, die Mitspieler sehen sie. Sie gelten ab der nächsten Runde, und der Browser merkt sie sich für den nächsten Raum. Bis auf Items hat jede drei Stufen, die mittlere ist der Normalfall.
 
 | Einstellung | Stufen | Wirkung |
 | --- | --- | --- |
 | Dauer | 2, 3, 5 Minuten | Länge einer Runde |
+| Items | aus, an | Kisten mit Items im Labyrinth |
 | Tempo | langsam, normal, schnell | Gehen und Sprinten mal 0,8 / 1 / 1,25 |
 | Sichtkreis | klein, mittel, groß | Radius 2,5 / 3,5 / 5 Felder |
 | Labyrinth | klein, mittel, groß | 16 × 10, 20 × 12 oder 24 × 14 Felder |
@@ -47,7 +68,7 @@ Eine statische Seite ohne Server und ohne Build-Schritt.
 - `js/maze.js`, `js/physics.js`, `js/sim.js`, `js/bots.js`: Labyrinth, Bewegung, Regeln und Bots, ohne Browser-Abhängigkeiten
 - `js/host.js`, `js/client.js`: Gastgeber und die Sicht eines Geräts auf das Spiel
 - `js/net.js`: Verbindung zwischen den Geräten und Verschlüsselung
-- `js/render.js`, `js/input.js`, `js/app.js`: Darstellung, Tastatur, Oberfläche
+- `js/render.js`, `js/itemart.js`, `js/input.js`, `js/app.js`: Darstellung, Item-Symbole, Tastatur, Oberfläche
 
 ### Warum sich die Steuerung direkt anfühlt
 

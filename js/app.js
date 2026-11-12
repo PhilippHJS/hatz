@@ -6,8 +6,11 @@ import { createClient } from './client.js';
 import { createRenderer } from './render.js';
 import { createKeyboard } from './input.js';
 import { createHostNet, createGuestNet, makeRoomCode, cleanCode, makeId, supported, DEFAULT_RELAYS } from './net.js';
-import { PHASE, ranking } from './sim.js';
-import { WISPS, TICK_RATE, ROUND_SECONDS, ROUND_LENGTHS, SETTINGS, DEFAULT_LEVELS, cleanLevels } from './config.js';
+import { PHASE, EVENT, ranking, canCatch } from './sim.js';
+import {
+  WISPS, TICK_RATE, ROUND_SECONDS, ROUND_LENGTHS, SETTINGS, DEFAULT_LEVELS, cleanLevels, ITEMS, ITEM,
+} from './config.js';
+import { glyphSvg } from './itemart.js';
 
 const $ = (selector) => document.querySelector(selector);
 const now = () => performance.now();
@@ -243,7 +246,7 @@ $('#options').addEventListener('change', (event) => {
 $('#b-reset').addEventListener('click', () => {
   if (!session || !session.host) return;
   session.host.setSeconds(ROUND_SECONDS);
-  for (const setting of SETTINGS) session.host.setLevel(setting.key, 1);
+  for (const setting of SETTINGS) session.host.setLevel(setting.key, setting.normal);
   keepSettings(session.host);
 });
 $('#b-copy').addEventListener('click', async () => {
@@ -373,7 +376,8 @@ function updateRoom(view) {
     });
     $('#settings').disabled = !isHost;
     $('#settings-hint').textContent = isHost ? 'Gelten ab der nächsten Runde.' : 'Der Gastgeber stellt sie ein.';
-    $('#b-reset').hidden = !isHost || chosen.every((level) => level === 1);
+    const normal = [1, ...DEFAULT_LEVELS];
+    $('#b-reset').hidden = !isHost || chosen.every((level, i) => level === normal[i]);
   });
   put('start', `${isHost}|${ended}`, () => {
     $('#b-start').hidden = !isHost;
@@ -386,15 +390,177 @@ function updateRoom(view) {
   });
 }
 
+// ---------- Items in der Anzeige ----------
+
+const badge = (index, big = false) => `<span class="badge${big ? ' big' : ''}" style="--c:${ITEMS[index].color}">${glyphSvg(index)}</span>`;
+const secsOf = (ticks) => Math.ceil(ticks / TICK_RATE);
+
+// Die Items in den Regeln im Raum
+$('#item-list').innerHTML = ITEMS.map((item, index) => `<li>${badge(index)}<span><b>${item.name}:</b> ${item.hint}</span></li>`).join('');
+
+// Meldungen oben in der Mitte, höchstens drei, jede verschwindet nach ein paar Sekunden
+const feed = [];
+let feedKey = 0;
+function addFeed(index, text, ms = 3600) {
+  const html = `${badge(index)}<span>${text}</span>`;
+  feed.push({ html, color: ITEMS[index].color, until: performance.now() + ms, id: (feedKey += 1) });
+  while (feed.length > 3) feed.shift();
+  renderFeed();
+}
+function renderFeed() {
+  const list = $('#feed');
+  const ids = new Set(feed.map((entry) => String(entry.id)));
+  for (const li of [...list.children]) if (!ids.has(li.dataset.id)) li.remove();
+  for (const entry of feed) {
+    if (list.querySelector(`[data-id="${entry.id}"]`)) continue;
+    const li = document.createElement('li');
+    li.dataset.id = entry.id;
+    li.style.setProperty('--c', entry.color);
+    li.innerHTML = entry.html;
+    list.append(li);
+  }
+}
+function tickFeed(t) {
+  let changed = false;
+  for (let i = feed.length - 1; i >= 0; i -= 1) {
+    const li = $('#feed').querySelector(`[data-id="${feed[i].id}"]`);
+    if (t > feed[i].until - 500 && li) li.classList.add('gone');
+    if (t > feed[i].until) {
+      feed.splice(i, 1);
+      changed = true;
+    }
+  }
+  if (changed) renderFeed();
+}
+
+// Große Einblendung in der Mitte
+let bannerTimer = 0;
+function showBanner(index, title, sub) {
+  const box = $('#banner');
+  box.hidden = false;
+  box.innerHTML = `<div class="card" style="--c:${ITEMS[index].color}">${badge(index, true)}<p class="title">${title}</p><p class="sub">${sub}</p></div>`;
+  clearTimeout(bannerTimer);
+  bannerTimer = setTimeout(() => {
+    box.hidden = true;
+  }, 1950);
+}
+
+// Ein Ereignis in Worte fassen. Was geheim ist (Falle, falsche Fährte), erfährt
+// nur, wer es benutzt hat. Was ein anderer auf Vorrat hat, erfährt niemand.
+function hudEvent(e, view) {
+  const me = view.slot;
+  const names = view.players.map((p) => p.name);
+  const who = (slot) => (slot === me ? 'Du' : `<b style="color:${WISPS[slot].color}">${esc(names[slot])}</b>`);
+  const whom = (slot) => (slot === me ? 'dich' : `<b style="color:${WISPS[slot].color}">${esc(names[slot])}</b>`);
+  const item = ITEMS[e.item];
+  const self = e.by === me;
+  if (e.kind === EVENT.FAIL && self) {
+    addFeed(ITEM.hedge, 'Hier ist kein Platz für eine Hecke', 2400);
+    return;
+  }
+  if (e.kind === EVENT.TRAP) {
+    let text;
+    if (e.of === me) text = `Du steckst in der Falle von ${who(e.by)}`;
+    else if (self) text = `${who(e.of)} tappt in deine Falle`;
+    else text = `${who(e.of)} tappt in eine Falle`;
+    addFeed(ITEM.trap, text);
+    return;
+  }
+  if (e.kind !== EVENT.USE || !item) return;
+  if (item.secret && !self) return;
+  const lines = {
+    [ITEM.sight]: self ? 'Du siehst das ganze Feld' : `${who(e.by)} sieht das ganze Feld`,
+    [ITEM.cloak]: self ? 'Du bist unsichtbar' : `${who(e.by)} ist unsichtbar`,
+    [ITEM.rocket]: self ? 'Du fliegst durch Hecken' : `${who(e.by)} fliegt durch Hecken`,
+    [ITEM.star]: self ? 'Du bist ein Stern' : `${who(e.by)} ist ein Stern`,
+    [ITEM.bolt]: self ? 'Dein Blitz lähmt die anderen' : `Blitz von ${who(e.by)}`,
+    [ITEM.flip]: self ? 'Du drehst den Ring um' : `${who(e.by)} dreht den Ring um`,
+    [ITEM.hedge]: self ? 'Hinter dir wächst eine Hecke' : `${who(e.by)} pflanzt eine Hecke`,
+    [ITEM.trap]: 'Du hast eine Falle gelegt',
+    [ITEM.decoy]: 'Dein Jäger folgt einer falschen Fährte',
+  };
+  addFeed(e.item, lines[e.item]);
+  const alive = view.players[me] && view.players[me].dead === 0;
+  if (e.item === ITEM.star) {
+    showBanner(e.item, 'Stern', self ? 'Du jagst beide, niemand kann dich fangen' : `${who(e.by)} jagt jetzt euch beide`);
+  } else if (e.item === ITEM.bolt) {
+    showBanner(e.item, 'Blitz', self ? 'Die anderen stehen still' : alive ? 'Du stehst eine Sekunde still' : `${who(e.by)} lähmt die anderen`);
+  } else if (e.item === ITEM.flip) {
+    const prey = view.players[view.prey];
+    showBanner(e.item, 'Kehrtwende', alive ? `Du jagst jetzt ${whom(prey.slot)}` : 'Der Ring läuft andersherum');
+  }
+}
+
+let lastFlip = 0;
+let everPicked = false;
+function updateItems(view, mine) {
+  const on = view.rules.items && (view.phase === PHASE.PLAY || view.phase === PHASE.COUNTDOWN);
+  put('items-on', on, (v) => {
+    $('#items').hidden = !v;
+    $('#hint').textContent = v
+      ? 'Bewegen mit WASD oder den Pfeiltasten, sprinten mit der Leertaste, Item auslösen mit E'
+      : 'Bewegen mit WASD oder den Pfeiltasten, sprinten mit der Leertaste';
+  });
+
+  // Kehrtwende betrifft alle: eigene Leiste, solange sie läuft
+  put('flip', view.flip > 0 ? secsOf(view.flip) : 0, (secs) => {
+    $('#flipbar').hidden = !secs;
+    $('#flipbar').style.setProperty('--c', ITEMS[ITEM.flip].color);
+    if (secs) $('#flipbar').innerHTML = `${badge(ITEM.flip)}<span>Kehrtwende: Der Ring läuft andersherum</span><span class="secs">${secs}</span>`;
+  });
+  if (lastFlip > 0 && view.flip === 0 && view.phase === PHASE.PLAY) addFeed(ITEM.flip, 'Der Ring läuft wieder normal', 2600);
+  lastFlip = view.flip;
+  if (!on) return;
+
+  // Was gerade auf einen selbst wirkt
+  const pills = [];
+  const add = (index, name, ticks) => {
+    if (ticks > 0) pills.push(`<span class="pill" style="--c:${ITEMS[index].color}">${badge(index)}${name}<b>${secsOf(ticks)}</b></span>`);
+  };
+  if (mine.dead === 0) {
+    add(ITEM.star, 'Stern', mine.star);
+    add(ITEM.rocket, 'Rakete', mine.ph);
+    add(ITEM.cloak, 'Unsichtbar', mine.cloak);
+    add(ITEM.sight, 'Mondschein', mine.sight);
+    add(ITEM.decoy, 'Falsche Fährte', mine.decoy);
+    if (mine.fz > 0) add(mine.frozenBy === 1 ? ITEM.bolt : ITEM.trap, mine.frozenBy === 1 ? 'Gelähmt' : 'In der Falle', mine.fz);
+  }
+  put('effects', pills.join(''), (v) => {
+    $('#effects').innerHTML = v;
+  });
+
+  // Das Item auf Vorrat
+  // Leer: Hinweis auf die Kisten, bis man zum ersten Mal eine aufgehoben hat
+  if (mine.item >= 0) everPicked = true;
+  put('slot', `${mine.item}|${everPicked}`, () => {
+    const index = mine.item;
+    $('#slot').innerHTML = index >= 0
+      ? `<div class="full" style="--c:${ITEMS[index].color}">${badge(index, true)}<span class="what"><b>${ITEMS[index].name}</b><small>${ITEMS[index].hint}</small></span><kbd>E</kbd></div>`
+      : `<div class="empty"><span class="badge empty"></span><span class="what"><b>Kein Item</b>${everPicked ? '' : '<small>Lauf über eine leuchtende Kiste</small>'}</span></div>`;
+  });
+}
+
 function updateHud(view, t) {
   const client = session.client;
   const names = view.players.map((p) => p.name);
-  const chip = (slot, role, me) => {
-    const out = view.players[slot].dead > 0;
-    return `<div class="chip${me ? ' me' : ''}${out ? ' out' : ''}">${wispSvg(slot)}<span class="who">${esc(names[slot])}</span>`
-      + `<span class="role">${out ? 'setzt aus' : role}</span><span class="pts">${view.players[slot].score}</span></div>`;
+  const mine = view.players[view.slot];
+  // Rollen nach den Regeln, damit auch Stern und Kehrtwende stimmen
+  const roleOf = (p) => {
+    if (p.dead > 0) return 'setzt aus';
+    if (p.mine) return mine.star > 0 ? 'Stern' : 'du';
+    if (p.cloak > 0) return 'unsichtbar';
+    if (p.star > 0) return 'Stern, jagt dich';
+    if (canCatch(view.ringDir, mine, p)) return 'deine Beute';
+    if (canCatch(view.ringDir, p, mine)) return 'jagt dich';
+    return 'außer Reichweite';
   };
-  const ring = chip(view.hunter, 'jagt dich', false) + HUNTS + chip(view.slot, 'du', true) + HUNTS + chip(view.prey, 'deine Beute', false);
+  const chip = (slot, me) => {
+    const p = view.players[slot];
+    const classes = `chip${me ? ' me' : ''}${p.dead > 0 ? ' out' : ''}${p.star > 0 && p.dead === 0 ? ' star' : ''}`;
+    return `<div class="${classes}">${wispSvg(slot)}<span class="who">${esc(names[slot])}</span>`
+      + `<span class="role">${roleOf(p)}</span><span class="pts">${p.score}</span></div>`;
+  };
+  const ring = chip(view.hunter, false) + HUNTS + chip(view.slot, true) + HUNTS + chip(view.prey, false);
   put('ring', ring, (v) => {
     $('#ring').innerHTML = v;
   });
@@ -428,7 +594,6 @@ function updateHud(view, t) {
   });
 
   // Auszeit nach einem Fang: wer es war und wann es weitergeht
-  const mine = view.players[view.slot];
   const down = view.phase === PHASE.PLAY && mine.dead > 0;
   put('down', down ? `${view.hunter}|${names[view.hunter]}|${Math.ceil(mine.dead / TICK_RATE)}` : '', (v) => {
     $('#down').hidden = !v;
@@ -436,13 +601,16 @@ function updateHud(view, t) {
     $('#down').innerHTML = `<b style="color:${WISPS[view.hunter].color}">${esc(names[view.hunter])}</b> hat dich gefangen. Weiter in <span class="secs">${Math.ceil(mine.dead / TICK_RATE)}</span>`;
   });
 
+  updateItems(view, mine);
+
   if (counting) {
     const left = Math.ceil(view.ticksLeft / TICK_RATE);
     put('count-num', left <= 3 ? String(Math.max(left, 1)) : '', (v) => {
       $('#count-num').textContent = v;
     });
     const colored = (slot) => `<b style="color:${WISPS[slot].color}">${esc(names[slot])}</b>`;
-    put('count-text', `Du jagst ${colored(view.prey)}. ${colored(view.hunter)} jagt dich.`, (v) => {
+    const extra = view.rules.items ? '<small>Leuchtende Kisten geben Items, auslösen mit E</small>' : '';
+    put('count-text', `Du jagst ${colored(view.prey)}. ${colored(view.hunter)} jagt dich.${extra}`, (v) => {
       $('#count-text').innerHTML = v;
     });
   }
@@ -513,7 +681,7 @@ function drawFrame(t) {
   });
 
   if (screen === 'game') {
-    renderer.setInsets({ top: 70, right: 14, bottom: 42, left: 14 });
+    renderer.setInsets({ top: 70, right: 14, bottom: view.rules.items ? 96 : 42, left: 14 });
     updateHud(view, t);
   } else {
     renderer.setInsets({ top: 16, right: 16, bottom: 16, left: panelWidth() });
@@ -521,7 +689,11 @@ function drawFrame(t) {
   }
 
   if (ownView) {
-    for (const e of session.client.effects.splice(0)) renderer.effect(e, view, t, false);
+    for (const e of session.client.effects.splice(0)) {
+      renderer.effect(e, view, t, false);
+      if (screen === 'game') hudEvent(e, view);
+    }
+    tickFeed(t);
     renderer.draw(view, t, { spectate: false, tags: true });
   } else {
     demo.client.frame(t);

@@ -5,9 +5,9 @@
 // Jede Nachricht darf verloren gehen, doppelt oder verspätet ankommen:
 // Spielstände tragen ihre Schrittnummer, Eingaben eine laufende Nummer.
 
-import { createSim, startRound, backToLobby, stepSim, PHASE } from './sim.js';
+import { createSim, startRound, backToLobby, stepSim, ringOf, PHASE } from './sim.js';
 import { createBot } from './bots.js';
-import { IDLE } from './physics.js';
+import { IDLE, MAX_INPUT } from './physics.js';
 import { randomSeed } from './rng.js';
 import { DT, TICK_RATE, PROTOCOL, ROUND_SECONDS, WISPS, SETTINGS, cleanLevels } from './config.js';
 
@@ -75,14 +75,24 @@ export function createHost({ seconds = ROUND_SECONDS, levels, autoRestart = fals
       pe: sim.phaseEnd,
       rn: sim.round,
       sd: sim.seed,
-      rd: sim.ringDir,
+      rd: ringOf(sim), // Richtung des Rings, Kehrtwende eingerechnet
+      fl: sim.flip,
       o: sim.levels,
+      // Je Figur: Ort, Tempo, Ausdauer, Punkte, Auszeit und Items. Das Item auf
+      // Vorrat steht für alle drin, gezeigt wird aber nur das eigene.
       p: sim.players.map((player) => {
         const b = player.body;
-        return [b.x, b.y, b.vx, b.vy, b.st, (b.ex ? 1 : 0) | (b.sp ? 2 : 0) | (b.hot ? 4 : 0), b.rw, player.score, player.shield, player.tp, player.dead];
+        return [
+          b.x, b.y, b.vx, b.vy, b.st, (b.ex ? 1 : 0) | (b.sp ? 2 : 0) | (b.hot ? 4 : 0), b.rw,
+          player.score, player.shield, player.tp, player.dead,
+          player.item, player.star, player.cloak, player.sight, player.decoy, b.ph, b.fz, player.frozenBy,
+        ];
       }),
+      bx: sim.boxes.map((box) => [box.id, box.x, box.y]),
+      hd: sim.hedges.map((hedge) => [hedge.id, hedge.side, hedge.index, hedge.ticks, hedge.owner]),
+      tr: sim.traps.map((trap) => [trap.id, trap.x, trap.y, trap.owner]),
       a: slots.map((slot) => slot.ackSeq),
-      e: sim.events.map((event) => [event.id, event.tick, event.by, event.of, event.x, event.y]),
+      e: sim.events.map((event) => [event.id, event.tick, event.kind, event.by, event.of, event.x, event.y, event.item]),
     };
   }
 
@@ -170,7 +180,7 @@ export function createHost({ seconds = ROUND_SECONDS, levels, autoRestart = fals
       for (let i = 0; i < msg.c.length; i += 1) {
         const seq = first + i;
         const code = msg.c[i];
-        if (seq <= slot.recvSeq || !Number.isInteger(code) || code < 0 || code > 17) continue;
+        if (seq <= slot.recvSeq || !Number.isInteger(code) || code < 0 || code > MAX_INPUT) continue;
         slot.queue.push({ seq, code });
         slot.recvSeq = seq;
       }

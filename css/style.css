@@ -497,32 +497,269 @@ button.quiet:hover {
   color: var(--alarm);
 }
 
-/* Hinweis während der Auszeit nach einem Fang */
-#down {
+/* Mitte oben: Auszeit, Kehrtwende und Meldungen untereinander */
+#notes {
   position: absolute;
-  top: 4.4rem;
+  top: 4.3rem;
   left: 50%;
   transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  pointer-events: none;
+}
+#down,
+#flipbar,
+#feed li {
   margin: 0;
-  padding: 0.35rem 1rem 0.45rem;
+  padding: 0.3rem 0.9rem 0.38rem;
   border-radius: 0.6rem;
-  background: rgba(16, 26, 48, 0.86);
-  box-shadow: inset 0 0 0 2px var(--line);
-  font-size: 1.2rem;
+  background: rgba(16, 26, 48, 0.88);
+  box-shadow: inset 0 0 0 2px var(--c, var(--line));
   font-weight: 500;
   white-space: nowrap;
 }
-#down b {
+#down {
+  font-size: 1.2rem;
+}
+#down b,
+#feed b,
+#flipbar b {
   font-weight: 700;
 }
-#down .secs {
+#down .secs,
+#flipbar .secs {
   font-family: var(--display);
   font-weight: 700;
-  font-size: 1.7rem;
+  font-size: 1.6rem;
   line-height: 1;
   margin-left: 0.25rem;
 }
+#flipbar,
+#feed li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding-left: 0.4rem;
+}
+#feed {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+}
+#feed li {
+  font-size: 1.02rem;
+  animation: feed-in 0.28s ease-out;
+  transition: opacity 0.5s ease;
+}
+#feed li.gone {
+  opacity: 0;
+}
+@keyframes feed-in {
+  from {
+    opacity: 0;
+    transform: translateY(-0.5rem) scale(0.96);
+  }
+}
 
+/* Plakette eines Items: Kreis in seiner Farbe, dunkles Zeichen */
+.badge {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 1.65rem;
+  height: 1.65rem;
+  border-radius: 50%;
+  background: var(--c);
+  color: var(--night);
+  box-shadow: 0 0 0 2px var(--night);
+}
+.badge svg {
+  width: 66%;
+  height: 66%;
+}
+.badge.big {
+  width: 2.7rem;
+  height: 2.7rem;
+}
+.badge.empty {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--line);
+  border: 2px dashed transparent;
+}
+
+/* Unten in der Mitte: laufende Wirkungen und das Item auf Vorrat */
+#items {
+  position: absolute;
+  bottom: 2.15rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  pointer-events: none;
+}
+#effects {
+  display: flex;
+  gap: 0.4rem;
+}
+#effects .pill {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.22rem 0.75rem 0.25rem 0.28rem;
+  border-radius: 2rem;
+  background: rgba(16, 26, 48, 0.9);
+  box-shadow: inset 0 0 0 2px var(--c);
+  font-weight: 500;
+  white-space: nowrap;
+}
+#effects .pill b {
+  font-family: var(--display);
+  font-size: 1.35rem;
+  line-height: 1;
+  min-width: 1ch;
+}
+#slot > div {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.3rem 0.8rem 0.3rem 0.32rem;
+  border-radius: 2.2rem;
+  background: rgba(16, 26, 48, 0.92);
+  box-shadow: inset 0 0 0 2px var(--c, var(--line));
+}
+#slot .full {
+  animation: slot-in 0.45s cubic-bezier(0.3, 1.6, 0.5, 1);
+}
+@keyframes slot-in {
+  from {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+}
+#slot .what {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+#slot .what b {
+  font-size: 1.08rem;
+}
+#slot .what small {
+  font-size: 0.85rem;
+  color: var(--moon-dim);
+  max-width: 17rem;
+}
+#slot .empty .what b {
+  font-weight: 500;
+  color: var(--moon-dim);
+}
+kbd {
+  font-family: var(--body);
+  font-weight: 700;
+  font-size: 1.05rem;
+  min-width: 1.9rem;
+  text-align: center;
+  padding: 0.05rem 0.45rem 0.1rem;
+  border: 2px solid var(--moon);
+  border-bottom-width: 4px;
+  border-radius: 0.45rem;
+}
+
+/* Große Einblendung für Stern, Blitz und Kehrtwende */
+#banner {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 17vh;
+  pointer-events: none;
+}
+#banner .card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 0.8rem 2.4rem 1rem;
+  background: radial-gradient(ellipse at center, rgba(16, 26, 48, 0.75) 0, rgba(16, 26, 48, 0) 70%);
+  animation: banner 1.7s ease-out forwards;
+}
+#banner .badge {
+  width: 3rem;
+  height: 3rem;
+  box-shadow: 0 0 0 3px var(--night), 0 0 2.4rem var(--c);
+}
+#banner .title {
+  margin: 0.4rem 0 0;
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: clamp(2.6rem, 7vh, 4.2rem);
+  line-height: 0.95;
+  color: var(--c);
+  text-shadow: 0 0.12rem 0 var(--night), 0 0 1.4rem rgba(16, 26, 48, 0.9);
+}
+#banner .sub {
+  margin: 0.3rem 0 0;
+  font-size: 1.2rem;
+  font-weight: 500;
+  text-shadow: 0 0 0.6rem var(--night), 0 0 0.3rem var(--night);
+}
+@keyframes banner {
+  0% {
+    opacity: 0;
+    transform: scale(1.35);
+  }
+  12% {
+    opacity: 1;
+    transform: scale(0.97);
+  }
+  20% {
+    transform: scale(1);
+  }
+  78% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1) translateY(-0.6rem);
+  }
+}
+
+/* Die Items in den Regeln */
+#item-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.6rem 0 0;
+  display: grid;
+  gap: 0.45rem;
+}
+#item-list li {
+  display: grid;
+  grid-template-columns: 1.65rem 1fr;
+  gap: 0.55rem;
+  align-items: start;
+  margin: 0;
+}
+#item-list b {
+  color: var(--moon);
+}
+
+#ring .chip.star {
+  box-shadow: inset 0 0 0 2px #ffd23f;
+}
+#count-text small {
+  display: block;
+  margin-top: 0.6rem;
+  font-size: 1.05rem;
+  color: var(--moon-dim);
+}
 #ring .chip.out {
   opacity: 0.45;
 }
@@ -597,7 +834,8 @@ button.quiet:hover {
     width: 100vw;
   }
   #ring .role,
-  #hint {
+  #hint,
+  #slot .what small {
     display: none;
   }
   #timer {
@@ -606,6 +844,11 @@ button.quiet:hover {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  #banner .card,
+  #feed li,
+  #slot .full {
+    animation-duration: 0.01s;
+  }
   #scrim,
   #wide,
   #hint {

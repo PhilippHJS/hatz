@@ -175,7 +175,8 @@ async function run(mode) {
   check(true, 'Gast sieht die Einstellung des Gastgebers, ausgegraut');
   await g1.click('#options label:has(input[name="opt-stamina"][value="0"])', { force: true }).catch(() => {});
   await sleep(300);
-  check((await host.evaluate(() => window.__hatz.session.host.levels[3])) === 2, 'Gast kann die Einstellung nicht ändern');
+  const staminaAt = await host.evaluate(() => window.__hatz.session.host.levels.length - 3);
+  check((await host.evaluate((i) => window.__hatz.session.host.levels[i], staminaAt)) === 2, 'Gast kann die Einstellung nicht ändern');
 
   await host.click('#b-start');
   await until(host, () => document.body.dataset.screen === 'game');
@@ -313,6 +314,37 @@ async function run(mode) {
     const moved = Math.hypot(a.players[s1.slot].x - b.players[s1.slot].x, a.players[s1.slot].y - b.players[s1.slot].y);
     check(moved > 0.3, `nach Ausfall eines Vermittlers kommt die Eingabe noch an (${moved.toFixed(2)} Felder)`);
     brokers[0] = await startBroker(RELAY_PORTS[0]);
+  }
+
+  if (direct) {
+    // Items: Gast 2 bekommt eine Falle (geheim) und dann einen Blitz (für alle sichtbar)
+    const s2slot = (await state(g2)).slot;
+    const give = (item) => host.evaluate(([slot, index]) => {
+      const sim = window.__hatz.session.host.sim;
+      sim.players[slot].item = index;
+    }, [s2slot, item]);
+    const ids = await host.evaluate(async () => (await import('/js/config.js')).ITEM);
+    await give(ids.trap);
+    await until(g2, () => !document.querySelector('#slot .full') === false);
+    check((await g2.textContent('#slot')).includes('Falle'), 'Gast sieht sein Item im Vorrat');
+    check(!(await g1.textContent('#slot')).includes('Falle'), 'die anderen sehen es nicht');
+    await g2.keyboard.press('KeyE');
+    await until(host, (slot) => window.__hatz.session.host.sim.players[slot].item === -1, s2slot);
+    await sleep(500);
+    check((await g2.textContent('#feed')).includes('Falle gelegt'), 'Gast bekommt Rückmeldung zur Falle');
+    check(!(await g1.textContent('#feed')).includes('Falle'), 'die Falle bleibt für die anderen geheim');
+    await give(ids.bolt);
+    await until(g2, () => Boolean(document.querySelector('#slot .full')));
+    await g2.keyboard.press('KeyE');
+    await until(g1, () => !document.querySelector('#banner').hidden, null, 5000);
+    const banner = await g1.textContent('#banner');
+    check(/Blitz/.test(banner), `alle sehen den Blitz: "${banner}"`);
+    check((await g1.textContent('#feed')).includes('Blitz von'), 'Meldung nennt, wer geblitzt hat');
+    const frozen = await g1.evaluate(() => window.__hatz.view().players[window.__hatz.view().slot].fz);
+    check(frozen > 0, 'die anderen sind gelähmt');
+    await sleep(120);
+    await shot(g1, '05c-blitz');
+    await sleep(1500);
   }
 
   // Gast lädt mitten in der Runde neu und sitzt wieder auf seinem Platz.

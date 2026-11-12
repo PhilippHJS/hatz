@@ -9,8 +9,11 @@
 // Irrlichter und Effekte. So bleibt der Aufwand pro Bild klein, auch auf
 // großen Bildschirmen ohne schnelle Grafik.
 
-import { WISPS, PLAYER_R, WALL_T, TICK_RATE, SHIELD_TICKS, RECOVER_AT, DEFAULT_RULES } from './config.js';
-import { PHASE } from './sim.js';
+import {
+  WISPS, PLAYER_R, WALL_T, TICK_RATE, SHIELD_TICKS, RECOVER_AT, DEFAULT_RULES, ITEMS, ITEM, itemTicks, TRAP_RADIUS,
+} from './config.js';
+import { drawBadge, drawGlyph } from './itemart.js';
+import { PHASE, EVENT, canCatch, fakeSpot } from './sim.js';
 import { makeRng } from './rng.js';
 
 const THEME = {
@@ -53,10 +56,14 @@ export function createRenderer(canvas, back, wide) {
 
   const actors = [0, 1, 2].map(() => ({
     alpha: 0, trail: [], lookX: 0, lookY: 1, blink: 2 + Math.random() * 3, tp: -1, wob: Math.random() * 10,
+    arrow: null, fake: false, // Pfeil auf diese Figur: Winkel und ob er gerade lügt
   }));
   const particles = [];
   const pops = [];
   const rings = [];
+  const strikes = []; // Blitzeinschläge
+  const badges = []; // aufsteigende Item-Plaketten
+  const boxSeen = new Map(); // Kiste -> wann sie zum ersten Mal zu sehen war
   let shake = 0;
   let lastJolt = '';
   let rules = DEFAULT_RULES; // Regeln der Runde, die gerade gezeigt wird
@@ -327,6 +334,290 @@ export function createRenderer(canvas, back, wide) {
     ctx.stroke();
   }
 
+  // schießt etwas über und federt zurück, nie unter null
+  const ease = (t) => Math.max(0, 1 + 2.2 * (t - 1) ** 3 + 1.2 * (t - 1) ** 2);
+
+  // Was hinter der Figur liegt: Schein des Sterns, Flamme der Rakete
+  function auraBack(p, alpha, now) {
+    const x = sx(p.x);
+    const y = sy(p.y);
+    const r = PLAYER_R * s;
+    if (p.star > 0) {
+      const hue = calm ? 45 : (now / 5) % 360;
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = alpha;
+      const g = ctx.createRadialGradient(x, y, r * 0.5, x, y, r * 3.4);
+      g.addColorStop(0, `hsla(${hue}, 100%, 72%, 0.75)`);
+      g.addColorStop(1, 'hsla(0, 0%, 0%, 0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(x, y, r * 3.4, 0, TAU);
+      ctx.fill();
+      ctx.restore();
+    }
+    if (p.ph > 0) {
+      const speed = Math.hypot(p.vx, p.vy);
+      const ux = speed > 0.3 ? -p.vx / speed : 0;
+      const uy = speed > 0.3 ? -p.vy / speed : 1;
+      const len = r * (1.5 + (calm ? 0.2 : Math.random() * 0.6)) * (speed > 0.3 ? 1 : 0.6);
+      const baseX = x + ux * r * 0.4;
+      const baseY = y + uy * r * 0.4;
+      const tipX = x + ux * (r + len);
+      const tipY = y + uy * (r + len);
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = alpha;
+      const g = ctx.createLinearGradient(baseX, baseY, tipX, tipY);
+      g.addColorStop(0, 'rgba(255, 244, 180, 1)');
+      g.addColorStop(0.45, 'rgba(255, 150, 60, 0.85)');
+      g.addColorStop(1, 'rgba(255, 60, 40, 0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.moveTo(baseX - uy * r * 0.62, baseY + ux * r * 0.62);
+      ctx.quadraticCurveTo(x + ux * (r + len * 0.4) - uy * r * 0.5, y + uy * (r + len * 0.4) + ux * r * 0.5, tipX, tipY);
+      ctx.quadraticCurveTo(x + ux * (r + len * 0.4) + uy * r * 0.5, y + uy * (r + len * 0.4) - ux * r * 0.5, baseX + uy * r * 0.62, baseY - ux * r * 0.62);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  // Was vor der Figur liegt: Strahlen des Sterns, Lähmung, Tarnkappe
+  function auraFront(p, alpha, now) {
+    const x = sx(p.x);
+    const y = sy(p.y);
+    const r = PLAYER_R * s;
+    if (p.star > 0) {
+      ctx.save();
+      ctx.globalAlpha = alpha * 0.95;
+      ctx.strokeStyle = ITEMS[ITEM.star].color;
+      ctx.lineWidth = Math.max(2, s * 0.045);
+      ctx.lineCap = 'round';
+      const turn = calm ? 0 : now * 0.0022;
+      ctx.beginPath();
+      for (let k = 0; k < 10; k += 1) {
+        const th = (k / 10) * TAU + turn;
+        const outer = r * (k % 2 ? 2.0 : 2.45);
+        ctx.moveTo(x + Math.cos(th) * r * 1.5, y + Math.sin(th) * r * 1.5);
+        ctx.lineTo(x + Math.cos(th) * outer, y + Math.sin(th) * outer);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+    if (p.fz > 0 && p.frozenBy === 1) {
+      // Blitz: bläulich erstarrt, Funken springen
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = 'rgba(127, 240, 255, 0.28)';
+      ctx.beginPath();
+      ctx.arc(x, y, r * 1.3, 0, TAU);
+      ctx.fill();
+      ctx.strokeStyle = '#e6fdff';
+      ctx.lineWidth = Math.max(1.5, s * 0.032);
+      ctx.lineJoin = 'miter';
+      const rnd = makeRng((Math.floor(now / 70) * 31 + p.slot * 977) >>> 0);
+      ctx.beginPath();
+      for (let k = 0; k < 6; k += 1) {
+        const th = rnd() * TAU;
+        let px = x + Math.cos(th) * r * 0.9;
+        let py = y + Math.sin(th) * r * 0.9;
+        ctx.moveTo(px, py);
+        for (let j = 1; j <= 3; j += 1) {
+          const rr = r * (0.9 + j * 0.38);
+          const side = (rnd() - 0.5) * r * 0.7;
+          px = x + Math.cos(th) * rr - Math.sin(th) * side;
+          py = y + Math.sin(th) * rr + Math.cos(th) * side;
+          ctx.lineTo(px, py);
+        }
+      }
+      ctx.stroke();
+      ctx.restore();
+    } else if (p.fz > 0) {
+      // Falle: Ranken halten die Figur fest
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      drawGlyph(ctx, ITEM.trap, x, y + r * 0.95, r * 2.2, 'rgba(185, 198, 218, 0.95)');
+      ctx.strokeStyle = '#5aa845';
+      ctx.lineWidth = Math.max(2, s * 0.05);
+      ctx.lineCap = 'round';
+      for (let k = 0; k < 3; k += 1) {
+        ctx.beginPath();
+        ctx.ellipse(x, y + r * 0.1, r * 1.28, r * 0.5, (k * TAU) / 6 + 0.35, 0, TAU);
+        ctx.stroke();
+      }
+      ctx.fillStyle = '#a9e58d';
+      for (let k = 0; k < 6; k += 1) {
+        const th = (k / 6) * TAU + 0.4;
+        ctx.beginPath();
+        ctx.ellipse(x + Math.cos(th) * r * 1.2, y + Math.sin(th) * r * 0.75, r * 0.2, r * 0.1, th, 0, TAU);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+    if (p.cloak > 0) {
+      // nur für die eigene Figur (und im Vorschaubild): flimmernder Rand
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.strokeStyle = ITEMS[ITEM.cloak].color;
+      ctx.lineWidth = Math.max(1.5, s * 0.035);
+      ctx.setLineDash([r * 0.32, r * 0.24]);
+      ctx.lineDashOffset = calm ? 0 : -now * 0.03;
+      ctx.beginPath();
+      ctx.arc(x, y, r * 1.45, 0, TAU);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  // Kisten: leuchten überall, auch im Dunkeln. Wer schon etwas auf Vorrat
+  // hat, sieht sie blasser, denn aufheben kann er sie gerade nicht.
+  function drawBoxes(view, me, now) {
+    const dim = me && me.item >= 0 && me.dead === 0;
+    const present = new Set();
+    for (const [id, bx, by] of view.boxes) {
+      present.add(id);
+      if (!boxSeen.has(id)) {
+        boxSeen.set(id, now);
+        for (let i = 0; i < (calm ? 4 : 14); i += 1) {
+          const ang = Math.random() * TAU;
+          const v = 1 + Math.random() * 2.5;
+          particles.push({ x: bx, y: by, vx: Math.cos(ang) * v, vy: Math.sin(ang) * v, t: now, life: 500 + Math.random() * 400, size: 0.03 + Math.random() * 0.04, color: '#ffe48a' });
+        }
+      }
+      const born = ease(Math.min(1, (now - boxSeen.get(id)) / 450));
+      const bob = calm ? 0 : Math.sin(now * 0.004 + id * 1.7) * 0.05;
+      const x = sx(bx);
+      const y = sy(by + bob);
+      const a = dim ? 0.42 : 1;
+      // Schein
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      const pulse = calm ? 0.5 : 0.5 + 0.5 * Math.sin(now * 0.005 + id);
+      const glowR = s * (0.75 + 0.15 * pulse) * born;
+      const g = ctx.createRadialGradient(x, y, 0, x, y, glowR);
+      g.addColorStop(0, `rgba(255, 214, 102, ${0.6 * a})`);
+      g.addColorStop(1, 'rgba(255, 214, 102, 0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(x, y, glowR, 0, TAU);
+      ctx.fill();
+      ctx.restore();
+      // Kiste
+      const size = s * 0.48 * born;
+      ctx.save();
+      ctx.globalAlpha = a;
+      ctx.translate(x, y);
+      ctx.rotate(calm ? 0 : Math.sin(now * 0.003 + id) * 0.06);
+      ctx.fillStyle = '#c98a43';
+      ctx.strokeStyle = THEME.ink;
+      ctx.lineWidth = Math.max(1.5, s * 0.03);
+      ctx.beginPath();
+      ctx.roundRect(-size / 2, -size / 2, size, size, size * 0.18);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#8f5a28';
+      ctx.fillRect(-size / 2 + 1, -size * 0.12, size - 2, size * 0.24);
+      ctx.fillStyle = '#ffd66a';
+      ctx.font = `700 ${size * 0.82}px "Grenze Gotisch", serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.lineWidth = size * 0.12;
+      ctx.strokeText('?', 0, size * 0.04);
+      ctx.fillText('?', 0, size * 0.04);
+      ctx.restore();
+    }
+    for (const id of boxSeen.keys()) if (!present.has(id)) boxSeen.delete(id);
+  }
+
+  // Gepflanzte Hecken: wachsen in einem Augenblick heran und welken am Ende.
+  // Die Blüten in der Farbe dessen, der sie gepflanzt hat, machen sie kenntlich.
+  function drawHedges(view) {
+    const total = itemTicks(ITEM.hedge);
+    for (const [id, side, index, ticks, owner] of view.hedges) {
+      let x1;
+      let y1;
+      let x2;
+      let y2;
+      if (side === 0) {
+        y1 = Math.floor(index / maze.W);
+        x1 = index % maze.W;
+        x2 = x1 + 1;
+        y2 = y1;
+      } else {
+        y1 = Math.floor(index / (maze.W + 1));
+        x1 = index % (maze.W + 1);
+        x2 = x1;
+        y2 = y1 + 1;
+      }
+      const grow = ease(Math.min(1, (total - ticks) / 18));
+      const wither = Math.min(1, ticks / 24);
+      const k = Math.max(0, grow * wither);
+      if (k <= 0) continue;
+      const cx = (x1 + x2) / 2;
+      const cy = (y1 + y2) / 2;
+      const half = 0.5 * Math.min(1, k);
+      const ex = (x2 - x1) * half;
+      const ey = (y2 - y1) * half;
+      ctx.save();
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = 'rgba(6, 30, 28, 0.45)';
+      ctx.lineWidth = WALL_T * s * 1.4 * k;
+      ctx.beginPath();
+      ctx.moveTo(sx(cx - ex), sy(cy - ey + 0.08));
+      ctx.lineTo(sx(cx + ex), sy(cy + ey + 0.08));
+      ctx.stroke();
+      ctx.strokeStyle = THEME.litHedge;
+      ctx.lineWidth = WALL_T * s * 1.15 * k;
+      ctx.beginPath();
+      ctx.moveTo(sx(cx - ex), sy(cy - ey));
+      ctx.lineTo(sx(cx + ex), sy(cy + ey));
+      ctx.stroke();
+      const rnd = makeRng((id * 7919) >>> 0);
+      for (let i = 0; i <= 4; i += 1) {
+        const f = i / 4 - 0.5;
+        const px = cx + (x2 - x1) * f * Math.min(1, k) + (rnd() - 0.5) * 0.05;
+        const py = cy + (y2 - y1) * f * Math.min(1, k) + (rnd() - 0.5) * 0.05;
+        const rr = WALL_T * s * (0.62 + rnd() * 0.22) * k;
+        ctx.fillStyle = THEME.litHedge;
+        ctx.beginPath();
+        ctx.arc(sx(px), sy(py), rr, 0, TAU);
+        ctx.fill();
+        ctx.fillStyle = THEME.litLeaf;
+        ctx.beginPath();
+        ctx.arc(sx(px) - rr * 0.1, sy(py) - rr * 0.2, rr * 0.62, 0, TAU);
+        ctx.fill();
+      }
+      ctx.fillStyle = WISPS[owner] ? WISPS[owner].color : THEME.moon;
+      for (let i = 0; i < 3; i += 1) {
+        const f = (i - 1) * 0.32;
+        ctx.beginPath();
+        ctx.arc(sx(cx + (x2 - x1) * f * Math.min(1, k)) + (rnd() - 0.5) * s * 0.08, sy(cy + (y2 - y1) * f * Math.min(1, k)) - s * 0.03, s * 0.045 * k, 0, TAU);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+  }
+
+  // Eigene Fallen: nur für den, der sie gelegt hat, und nur angedeutet
+  function drawTraps(view, now) {
+    for (const [, tx, ty] of view.traps) {
+      const x = sx(tx);
+      const y = sy(ty);
+      ctx.save();
+      ctx.globalAlpha = 0.55 + (calm ? 0 : 0.15 * Math.sin(now * 0.004));
+      ctx.strokeStyle = ITEMS[ITEM.trap].color;
+      ctx.lineWidth = Math.max(1.2, s * 0.025);
+      ctx.setLineDash([s * 0.06, s * 0.06]);
+      ctx.beginPath();
+      ctx.arc(x, y, TRAP_RADIUS * s, 0, TAU);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      drawGlyph(ctx, ITEM.trap, x, y, s * 0.42, ITEMS[ITEM.trap].color);
+      ctx.restore();
+    }
+  }
+
   function label(text, x, y, size, alpha, weight = 700) {
     ctx.font = `${weight} ${size}px "Alegreya Sans", system-ui, sans-serif`;
     ctx.textAlign = 'center';
@@ -341,14 +632,16 @@ export function createRenderer(canvas, back, wide) {
     ctx.globalAlpha = 1;
   }
 
-  function drawRoleMarks(p, alpha, role, now) {
+  function drawRoleMarks(p, alpha, role, text, now) {
     const x = sx(p.x);
     const y = sy(p.y);
     const r = PLAYER_R * s;
     ctx.globalAlpha = alpha * 0.9;
     ctx.strokeStyle = THEME.moon;
     ctx.lineWidth = Math.max(1.5, s * 0.032);
-    if (role === 'prey') {
+    if (!role) {
+      // weder Jäger noch Beute
+    } else if (role === 'prey') {
       // Zielring: gestrichelt, dreht sich langsam
       const turn = calm ? 0 : now * 0.0012;
       ctx.setLineDash([r * 0.55, r * 0.38]);
@@ -374,10 +667,10 @@ export function createRenderer(canvas, back, wide) {
     ctx.globalAlpha = 1;
     const size = Math.max(11, s * 0.24);
     label(p.name, x, y + r * 2.2, size, alpha);
-    label(role === 'prey' ? 'deine Beute' : 'jagt dich', x, y + r * 2.2 + size * 1.05, size * 0.82, alpha * 0.8, 500);
+    if (text) label(text, x, y + r * 2.2 + size * 1.05, size * 0.82, alpha * 0.8, 500);
   }
 
-  function drawOwnMarks(me, prey, preyAlpha, now, phase) {
+  function drawOwnMarks(me, now) {
     const x = sx(me.x);
     const y = sy(me.y);
     const r = PLAYER_R * s;
@@ -411,35 +704,80 @@ export function createRenderer(canvas, back, wide) {
     }
     ctx.globalAlpha = 1;
 
-    // Pfeil zur Beute, in ihrer Farbe
-    if (prey && prey.dead === 0 && phase !== PHASE.END) {
-      const dx = prey.x - me.x;
-      const dy = prey.y - me.y;
-      const d = Math.sqrt(dx * dx + dy * dy);
-      if (d > 0.9) {
-        const ux = dx / d;
-        const uy = dy / d;
-        const dist = r * 2.3 + (calm ? 0 : Math.sin(now * 0.006) * r * 0.16);
-        const tipX = x + ux * (dist + r * 1.05);
-        const tipY = y + uy * (dist + r * 1.05);
-        const bx = x + ux * dist;
-        const by = y + uy * dist;
-        const w = r * 0.68;
-        ctx.globalAlpha = preyAlpha > 0.5 ? 0.45 : 0.95;
-        ctx.beginPath();
-        ctx.moveTo(tipX, tipY);
-        ctx.lineTo(bx - uy * w, by + ux * w);
-        ctx.lineTo(bx + ux * r * 0.32, by + uy * r * 0.32);
-        ctx.lineTo(bx + uy * w, by - ux * w);
-        ctx.closePath();
-        ctx.fillStyle = WISPS[prey.slot].color;
-        ctx.fill();
-        ctx.lineJoin = 'round';
-        ctx.lineWidth = Math.max(1.5, s * 0.035);
-        ctx.strokeStyle = 'rgba(16, 26, 48, 0.85)';
-        ctx.stroke();
-        ctx.globalAlpha = 1;
+    // Gelähmt: Ring läuft ab, bis es weitergeht
+    if (me.fz > 0) {
+      const total = me.frozenBy === 1 ? itemTicks(ITEM.bolt) : itemTicks(ITEM.trap);
+      ctx.lineCap = 'round';
+      ctx.lineWidth = Math.max(2.5, s * 0.055);
+      ctx.strokeStyle = 'rgba(242, 240, 221, 0.25)';
+      ctx.beginPath();
+      ctx.arc(x, y, r * 1.85, 0, TAU);
+      ctx.stroke();
+      ctx.strokeStyle = me.frozenBy === 1 ? ITEMS[ITEM.bolt].color : '#a9e58d';
+      ctx.beginPath();
+      ctx.arc(x, y, r * 1.85, -Math.PI / 2, -Math.PI / 2 + TAU * Math.min(1, me.fz / total));
+      ctx.stroke();
+    }
+  }
+
+  // Pfeile zu allem, was man fangen darf (mit Stern sind es zwei). Auf
+  // Unsichtbare zeigt keiner, bei falscher Fährte zeigt er auf die falsche
+  // Stelle. Der Pfeil schwenkt, statt zu springen, damit man merkt, wenn sich
+  // etwas ändert.
+  function drawArrows(view, me, now, dt) {
+    const x = sx(me.x);
+    const y = sy(me.y);
+    const r = PLAYER_R * s;
+    for (const p of view.players) {
+      if (p.mine) continue;
+      const actor = actors[p.slot];
+      const catchable = view.phase !== PHASE.END && canCatch(view.ringDir, me, p) && p.cloak === 0;
+      if (!catchable) {
+        actor.arrow = null;
+        actor.fake = false;
+        continue;
       }
+      const fake = p.decoy > 0;
+      const spot = fake ? fakeSpot(maze, p.x, p.y) : p;
+      const dx = spot.x - me.x;
+      const dy = spot.y - me.y;
+      const d = Math.sqrt(dx * dx + dy * dy);
+      const target = Math.atan2(dy, dx);
+      if (actor.fake && !fake && actor.arrow !== null) {
+        // Die falsche Fährte endet: Jetzt merkt der Jäger, dass er reingelegt wurde
+        pops.push({ x: me.x + Math.cos(actor.arrow) * 1.1, y: me.y + Math.sin(actor.arrow) * 1.1 - 0.2, text: 'Falsche Fährte!', color: ITEMS[ITEM.decoy].color, t: now, size: 0.38, body: true });
+      }
+      actor.fake = fake;
+      if (actor.arrow === null) actor.arrow = target;
+      else {
+        let diff = target - actor.arrow;
+        while (diff > Math.PI) diff -= TAU;
+        while (diff < -Math.PI) diff += TAU;
+        actor.arrow += diff * Math.min(1, dt * 9);
+      }
+      if (d <= 0.9 && !fake) continue;
+      const ux = Math.cos(actor.arrow);
+      const uy = Math.sin(actor.arrow);
+      const dist = r * 2.3 + (calm ? 0 : Math.sin(now * 0.006) * r * 0.16);
+      const tipX = x + ux * (dist + r * 1.05);
+      const tipY = y + uy * (dist + r * 1.05);
+      const bx = x + ux * dist;
+      const by = y + uy * dist;
+      const w = r * 0.68;
+      ctx.globalAlpha = actor.alpha > 0.5 ? 0.45 : 0.95;
+      ctx.beginPath();
+      ctx.moveTo(tipX, tipY);
+      ctx.lineTo(bx - uy * w, by + ux * w);
+      ctx.lineTo(bx + ux * r * 0.32, by + uy * r * 0.32);
+      ctx.lineTo(bx + uy * w, by - ux * w);
+      ctx.closePath();
+      ctx.fillStyle = WISPS[p.slot].color;
+      ctx.fill();
+      ctx.lineJoin = 'round';
+      ctx.lineWidth = Math.max(1.5, s * (me.star > 0 ? 0.05 : 0.035));
+      ctx.strokeStyle = me.star > 0 ? ITEMS[ITEM.star].color : 'rgba(16, 26, 48, 0.85)';
+      ctx.stroke();
+      ctx.globalAlpha = 1;
     }
   }
 
@@ -483,8 +821,8 @@ export function createRenderer(canvas, back, wide) {
         pops.splice(i, 1);
         continue;
       }
-      const size = s * 0.62;
-      ctx.font = `700 ${size}px "Grenze Gotisch", serif`;
+      const size = s * (pop.size || 0.62);
+      ctx.font = pop.body ? `700 ${size}px "Alegreya Sans", system-ui, sans-serif` : `700 ${size}px "Grenze Gotisch", serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.globalAlpha = age < 0.7 ? 1 : (1 - age) / 0.3;
@@ -496,37 +834,173 @@ export function createRenderer(canvas, back, wide) {
       ctx.fillStyle = pop.color;
       ctx.fillText(pop.text, sx(pop.x), y);
     }
+    // Blitzeinschläge: von oben auf jede gelähmte Figur
+    for (let i = strikes.length - 1; i >= 0; i -= 1) {
+      const strike = strikes[i];
+      const age = (now - strike.t) / 420;
+      if (age >= 1) {
+        strikes.splice(i, 1);
+        continue;
+      }
+      const rnd = makeRng(strike.seed);
+      const x0 = sx(strike.x) + (rnd() - 0.5) * s * 2;
+      const y0 = Math.min(sy(strike.y) - s * 6, oy - s * 0.5);
+      const x1 = sx(strike.x);
+      const y1 = sy(strike.y);
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      for (const [width, color] of [[s * 0.22, 'rgba(127, 240, 255, 0.35)'], [s * 0.07, 'rgba(240, 255, 255, 0.95)']]) {
+        ctx.globalAlpha = 1 - age;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = Math.max(1.5, width * (1 - age * 0.5));
+        ctx.lineJoin = 'miter';
+        ctx.beginPath();
+        ctx.moveTo(x0, y0);
+        const jag = makeRng(strike.seed + 1);
+        for (let k = 1; k < 9; k += 1) {
+          const f = k / 9;
+          ctx.lineTo(x0 + (x1 - x0) * f + (jag() - 0.5) * s * 0.7, y0 + (y1 - y0) * f);
+        }
+        ctx.lineTo(x1, y1);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+    // Plaketten der Items steigen über der Figur auf
+    for (let i = badges.length - 1; i >= 0; i -= 1) {
+      const badge = badges[i];
+      const age = (now - badge.t) / 1300;
+      if (age >= 1) {
+        badges.splice(i, 1);
+        continue;
+      }
+      const grow = ease(Math.min(1, age * 4));
+      const alpha = age < 0.75 ? 1 : (1 - age) / 0.25;
+      drawBadge(ctx, badge.item, sx(badge.x), sy(badge.y) - s * (0.75 + age * 0.7), s * 0.62 * grow, alpha);
+    }
     ctx.globalAlpha = 1;
+  }
+
+  function burst(x, y, color, count, speed, now) {
+    for (let i = 0; i < (calm ? Math.ceil(count / 4) : count); i += 1) {
+      const ang = Math.random() * TAU;
+      const v = speed * (0.4 + Math.random());
+      particles.push({ x, y, vx: Math.cos(ang) * v, vy: Math.sin(ang) * v, t: now, life: 400 + Math.random() * 500, size: 0.04 + Math.random() * 0.06, color });
+    }
   }
 
   function locate(x, y, color, now) {
     for (let i = 0; i < 2; i += 1) rings.push({ x, y, color, t: now + i * 180, life: 800, from: 1.6, to: 0.35 });
   }
 
-  // Ein Fang. `view` ist der Stand, wie ihn dieses Gerät gerade sieht.
+  // Ein Ereignis: Fang, Item, Falle, Kiste. `view` ist der Stand, wie ihn
+  // dieses Gerät gerade sieht. Gezeigt wird nur, was man auch sehen kann.
   function effect(e, view, now, spectate) {
-    if (!maze || e.type !== 'catch') return;
-    const me = view.slot >= 0 ? view.players[view.slot] : null;
-    const involved = me && (e.by === view.slot || e.of === view.slot);
-    const everything = spectate || view.phase === PHASE.END || (me && me.dead > 0);
-    if (!everything && !involved && !(me && inSight(me, e.x, e.y))) return;
-    const color = WISPS[e.of].color;
-    const rng = Math.random;
-    for (let i = 0; i < (calm ? 8 : 28); i += 1) {
-      const ang = rng() * TAU;
-      const v = 1.5 + rng() * 5.5;
-      particles.push({ x: e.x, y: e.y, vx: Math.cos(ang) * v, vy: Math.sin(ang) * v, t: now, life: 450 + rng() * 500, size: 0.05 + rng() * 0.07, color });
+    if (!maze) return;
+    const me = !spectate && view.slot >= 0 ? view.players[view.slot] : null;
+    const mine = Boolean(me) && e.by === view.slot;
+    const everything = spectate || view.phase === PHASE.END || (me && (me.dead > 0 || me.sight > 0));
+    const seen = (x, y) => everything || (me && inSight(me, x, y));
+    const item = ITEMS[e.item];
+
+    if (e.kind === EVENT.CATCH) {
+      const involved = me && (e.by === view.slot || e.of === view.slot);
+      if (!involved && !seen(e.x, e.y)) return;
+      const color = WISPS[e.of].color;
+      burst(e.x, e.y, color, 28, 4.5, now);
+      rings.push({ x: e.x, y: e.y, color, t: now, life: 520, from: 0.2, to: 1.5 });
+      pops.push({ x: e.x + 0.45, y: e.y + 0.1, text: '−1', color, t: now });
+      pops.push({ x: e.x - 0.45, y: e.y - 0.15, text: '+1', color: WISPS[e.by].color, t: now });
+      if (me && e.of === view.slot) {
+        flash = 1;
+        flashColor = WISPS[e.by].color;
+        shake = 1;
+      } else if (me && e.by === view.slot) {
+        shake = 0.5;
+      }
+      return;
     }
-    rings.push({ x: e.x, y: e.y, color, t: now, life: 520, from: 0.2, to: 1.5 });
-    pops.push({ x: e.x + 0.45, y: e.y + 0.1, text: '−1', color, t: now });
-    pops.push({ x: e.x - 0.45, y: e.y - 0.15, text: '+1', color: WISPS[e.by].color, t: now });
-    if (me && e.of === view.slot) {
-      flash = 1;
-      flashColor = WISPS[e.by].color;
-      shake = 1;
-    } else if (me && e.by === view.slot) {
-      shake = 0.5;
+
+    if (e.kind === EVENT.PICK) {
+      if (mine) {
+        burst(e.x, e.y, '#ffe48a', 22, 3.5, now);
+        rings.push({ x: e.x, y: e.y, color: '#ffd66a', t: now, life: 500, from: 0.2, to: 1.1 });
+        badges.push({ item: e.item, x: me.x, y: me.y, t: now });
+        pops.push({ x: me.x, y: me.y - 1.25, text: item ? item.name : '', color: item ? item.color : THEME.moon, t: now + 120, size: 0.36, body: true });
+      } else if (seen(e.x, e.y)) {
+        burst(e.x, e.y, '#ffe48a', 12, 2.5, now);
+      }
+      return;
     }
+
+    if (e.kind === EVENT.FAIL) {
+      if (mine) pops.push({ x: me.x, y: me.y - 0.9, text: 'Kein Platz für eine Hecke', color: THEME.moon, t: now, size: 0.32, body: true });
+      return;
+    }
+
+    if (e.kind === EVENT.TRAP) {
+      const victimIsMe = me && e.of === view.slot;
+      if (!victimIsMe && !mine && !seen(e.x, e.y)) return;
+      burst(e.x, e.y, '#b9c6da', 18, 3, now);
+      burst(e.x, e.y, '#a9e58d', 12, 2, now);
+      rings.push({ x: e.x, y: e.y, color: '#b9c6da', t: now, life: 420, from: 1.2, to: 0.3 });
+      badges.push({ item: ITEM.trap, x: e.x, y: e.y, t: now });
+      if (victimIsMe) {
+        shake = 0.8;
+        flash = 0.6;
+        flashColor = '#5aa845';
+      }
+      return;
+    }
+
+    if (e.kind !== EVENT.USE || !item) return;
+    if (item.secret && !mine) return; // Falle und falsche Fährte bleiben geheim
+    const at = view.players[e.by];
+    const userSeen = mine || seen(e.x, e.y);
+    if (userSeen) {
+      rings.push({ x: e.x, y: e.y, color: item.color, t: now, life: 600, from: 0.3, to: 1.7 });
+      badges.push({ item: e.item, x: mine ? me.x : e.x, y: mine ? me.y : e.y, t: now });
+    }
+    switch (e.item) {
+      case ITEM.bolt:
+        flash = 0.85;
+        flashColor = '#bff7ff';
+        for (const p of view.players) {
+          if (p.slot === e.by || p.dead > 0) continue;
+          const visible = p.mine || (seen(p.x, p.y) && p.cloak === 0);
+          if (visible) strikes.push({ x: p.x, y: p.y, t: now, seed: (Math.random() * 1e9) >>> 0 });
+        }
+        if (me && !mine && me.dead === 0) shake = 0.7;
+        break;
+      case ITEM.flip:
+        for (const p of view.players) {
+          if (p.dead > 0 || (!p.mine && !seen(p.x, p.y))) continue;
+          rings.push({ x: p.x, y: p.y, color: item.color, t: now, life: 700, from: 2.2, to: 0.4 });
+          rings.push({ x: p.x, y: p.y, color: item.color, t: now + 160, life: 700, from: 2.2, to: 0.4 });
+        }
+        break;
+      case ITEM.star:
+        if (userSeen) burst(e.x, e.y, item.color, 36, 5, now);
+        break;
+      case ITEM.cloak:
+        if (userSeen) burst(e.x, e.y, '#c9bfff', 26, 2.2, now);
+        break;
+      case ITEM.rocket:
+        if (userSeen) burst(e.x, e.y, '#ffb36b', 20, 3, now);
+        break;
+      case ITEM.sight:
+        if (mine) rings.push({ x: e.x, y: e.y, color: item.color, t: now, life: 900, from: 0.5, to: Math.max(maze.W, maze.H) });
+        break;
+      case ITEM.hedge:
+        if (userSeen) burst(e.x, e.y, '#a9e58d', 14, 2, now);
+        break;
+      case ITEM.decoy:
+        if (mine) burst(e.x, e.y, item.color, 14, 2, now);
+        break;
+      default:
+        break;
+    }
+    if (at && at.mine && e.item === ITEM.rocket) shake = 0.25;
   }
 
   function draw(view, now, { spectate = false, tags = true } = {}) {
@@ -546,16 +1020,21 @@ export function createRenderer(canvas, back, wide) {
     rules = view.rules || DEFAULT_RULES;
 
     const me = !spectate && view.slot >= 0 ? view.players[view.slot] : null;
-    // Das ganze Feld sieht, wer gerade aussetzt, und jeder am Rundenende.
-    const whole = !spectate && (!me || me.dead > 0 || view.phase === PHASE.END);
+    // Das ganze Feld sieht, wer gerade aussetzt oder Mondschein hat, und jeder am Rundenende.
+    const whole = !spectate && (!me || me.dead > 0 || me.sight > 0 || view.phase === PHASE.END);
     if (view.round !== round) {
       round = view.round;
       particles.length = 0;
       pops.length = 0;
       rings.length = 0;
+      strikes.length = 0;
+      badges.length = 0;
+      boxSeen.clear();
       for (const actor of actors) {
         actor.trail.length = 0;
         actor.tp = -1;
+        actor.arrow = null;
+        actor.fake = false;
       }
     }
 
@@ -639,7 +1118,9 @@ export function createRenderer(canvas, back, wide) {
     for (const p of view.players) {
       const actor = actors[p.slot];
       const out = p.dead > 0;
-      const visible = !out && (whole || spectate || p.mine || inSight(me, p.x, p.y));
+      // Unsichtbare sieht niemand, außer am Rundenende und im Vorschaubild
+      const hidden = p.cloak > 0 && !p.mine && !spectate && view.phase !== PHASE.END;
+      const visible = !out && !hidden && (whole || spectate || p.mine || inSight(me, p.x, p.y));
       actor.alpha += ((visible ? 1 : 0) - actor.alpha) * Math.min(1, dt * (visible ? 18 : 10));
       if (out && !p.mine) actor.alpha = 0;
       if (actor.tp !== p.tp) {
@@ -653,11 +1134,36 @@ export function createRenderer(canvas, back, wide) {
       if (!out && view.phase === PHASE.PLAY && (!last || Math.abs(last.x - p.x) + Math.abs(last.y - p.y) > 0.045)) {
         actor.trail.push({ x: p.x, y: p.y, t: now, life: p.sp ? 330 : 210 });
       }
+      // Funken der Rakete und Glitzer des Sterns, nur wo man die Figur sieht
+      if (visible && view.phase === PHASE.PLAY && !calm) {
+        const speed = Math.hypot(p.vx, p.vy);
+        if (p.ph > 0) {
+          const ux = speed > 0.3 ? -p.vx / speed : 0;
+          const uy = speed > 0.3 ? -p.vy / speed : 1;
+          for (let i = 0; i < Math.ceil(dt * 120); i += 1) {
+            particles.push({
+              x: p.x + ux * 0.35 + (Math.random() - 0.5) * 0.15, y: p.y + uy * 0.35 + (Math.random() - 0.5) * 0.15,
+              vx: ux * (2 + Math.random() * 2) + (Math.random() - 0.5) * 1.5, vy: uy * (2 + Math.random() * 2) + (Math.random() - 0.5) * 1.5,
+              t: now, life: 260 + Math.random() * 260, size: 0.04 + Math.random() * 0.05,
+              color: ['#fff2b0', '#ffb347', '#ff6b3d', '#9aa3b5'][Math.floor(Math.random() * 4)],
+            });
+          }
+        }
+        if (p.star > 0 && Math.random() < dt * 25) {
+          const ang = Math.random() * TAU;
+          particles.push({ x: p.x + Math.cos(ang) * 0.45, y: p.y + Math.sin(ang) * 0.45, vx: Math.cos(ang) * 0.6, vy: Math.sin(ang) * 0.6 - 0.4, t: now, life: 600, size: 0.035, color: `hsl(${(now / 5 + ang * 60) % 360}, 100%, 75%)` });
+        }
+      }
       while (actor.trail.length && now - actor.trail[0].t > actor.trail[0].life) actor.trail.shift();
     }
     if (me && view.phase === PHASE.COUNTDOWN && Math.floor(now / 1000) !== Math.floor((now - dt * 1000) / 1000)) {
       locate(me.x, me.y, WISPS[me.slot].color, now);
     }
+
+    // Gepflanzte Hecken, Kisten und eigene Fallen liegen unter den Figuren
+    drawHedges(view);
+    if (me && view.phase === PHASE.PLAY) drawTraps(view, now);
+    if (view.phase === PHASE.PLAY || view.phase === PHASE.COUNTDOWN) drawBoxes(view, me, now);
 
     // Erst die anderen, die eigene Figur zuoberst
     const order = view.players.filter((p) => !p.mine).concat(view.players.filter((p) => p.mine));
@@ -668,16 +1174,24 @@ export function createRenderer(canvas, back, wide) {
         continue;
       }
       if (actor.alpha < 0.02) continue;
-      drawWisp(p, actor, actor.alpha, now, dt);
+      // Die eigene Figur unter der Tarnkappe bleibt für einen selbst blass zu sehen
+      const alpha = actor.alpha * (p.cloak > 0 ? 0.38 : 1);
+      auraBack(p, actor.alpha, now);
+      drawWisp(p, actor, alpha, now, dt);
+      auraFront(p, actor.alpha, now);
     }
     if (me) {
-      const prey = view.players[view.prey];
       const playing = view.phase === PHASE.PLAY || view.phase === PHASE.COUNTDOWN;
-      if (me.dead === 0 && playing) drawOwnMarks(me, prey, actors[prey.slot].alpha, now, view.phase);
+      if (me.dead === 0 && playing) {
+        drawOwnMarks(me, now);
+        drawArrows(view, me, now, dt);
+      }
       if (tags && view.phase !== PHASE.END) {
         for (const p of view.players) {
           if (p.mine || actors[p.slot].alpha < 0.05) continue;
-          drawRoleMarks(p, actors[p.slot].alpha, p.slot === view.prey ? 'prey' : 'hunter', now);
+          const role = canCatch(view.ringDir, me, p) ? 'prey' : canCatch(view.ringDir, p, me) ? 'hunter' : null;
+          const text = p.star > 0 ? 'Stern, jagt dich' : role === 'prey' ? 'deine Beute' : role === 'hunter' ? 'jagt dich' : '';
+          drawRoleMarks(p, actors[p.slot].alpha, role, text, now);
         }
       }
     }

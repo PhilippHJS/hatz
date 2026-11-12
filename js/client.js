@@ -6,11 +6,14 @@
 // ab, gleitet die Figur unmerklich dorthin statt zu springen. Die Mitspieler
 // werden mit einer kleinen Verzögerung zwischen zwei bekannten Ständen bewegt,
 // damit sie auch bei unruhiger Verbindung flüssig laufen.
+//
+// Auch die Rakete und gepflanzte Hecken rechnet die Vorhersage mit, damit die
+// eigene Figur durch Hecken fliegt und an neuen Hecken hält, ohne zu ruckeln.
 
 import { buildMaze } from './maze.js';
-import { newBody, copyBody, stepBody, IDLE } from './physics.js';
+import { newBody, copyBody, stepBody, IDLE, inputUse, withoutUse } from './physics.js';
 import { preyOf, hunterOf, PHASE } from './sim.js';
-import { DT, TICK_RATE, PROTOCOL, WISPS, DEFAULT_RULES, cleanLevels, rulesFor } from './config.js';
+import { DT, TICK_RATE, PROTOCOL, WISPS, DEFAULT_RULES, cleanLevels, rulesFor, ITEM, itemTicks } from './config.js';
 
 const STEP_MS = DT * 1000;
 const LOST_MS = 5000;
@@ -49,6 +52,8 @@ export function createClient({ id, name, watch = false, link }) {
   let rules = DEFAULT_RULES; // Regeln der laufenden Runde
   let levelsKey = '';
   let welcomeN = 0;
+  let wantUse = false; // E wurde gedrückt, geht mit dem nächsten Schritt raus
+  const planted = new Map(); // gepflanzte Hecken, die in der eigenen Kopie des Labyrinths stehen
 
   // Uhrenabgleich: Schrittnummer des Gastgebers als Funktion der eigenen Zeit
   const samples = [];
@@ -80,6 +85,35 @@ export function createClient({ id, name, watch = false, link }) {
     body.sp = (arr[5] & 2) !== 0;
     body.hot = (arr[5] & 4) !== 0;
     body.rw = arr[6];
+    body.ph = arr[16] || 0;
+    body.fz = arr[17] || 0;
+  }
+
+  // Gepflanzte Hecken in die eigene Kopie des Labyrinths übernehmen
+  function plantHedges(snap) {
+    const m = client.maze;
+    if (!m) return;
+    const wanted = new Map();
+    for (const [, side, index] of snap.hd || []) wanted.set(`${side}:${index}`, [side, index]);
+    for (const [key, [side, index]] of planted) {
+      if (wanted.has(key)) continue;
+      if (side === 0) m.h[index] = 0;
+      else m.v[index] = 0;
+      planted.delete(key);
+    }
+    for (const [key, [side, index]] of wanted) {
+      if (planted.has(key)) continue;
+      if (side === 0) m.h[index] = 1;
+      else m.v[index] = 1;
+      planted.set(key, [side, index]);
+    }
+  }
+
+  // Die Rakete der eigenen Figur gleich beim Drücken zünden, nicht erst, wenn
+  // der Gastgeber antwortet. Gilt nur für den ersten noch offenen Einsatz.
+  const ROCKET_TICKS = itemTicks(ITEM.rocket);
+  function launch(code, held, earlier) {
+    if (inputUse(code) && held === ITEM.rocket && !earlier) me.ph = ROCKET_TICKS;
   }
 
   // Gültigen Stand übernehmen und die offenen Eingaben erneut anwenden
@@ -92,8 +126,11 @@ export function createClient({ id, name, watch = false, link }) {
     copyBody(me, mePrev);
     const out = arr[10] > 0; // gefangen: Die Figur steht, bis sie wieder einsteigt
     if (snap.ph === PHASE.PLAY && client.maze && !out) {
+      let used = false;
       for (let i = 0; i < pending.length; i += 1) {
         if (i === pending.length - 1) copyBody(me, mePrev);
+        launch(pending[i].code, arr[11], used);
+        if (inputUse(pending[i].code)) used = true;
         stepBody(client.maze, me, pending[i].code, rules);
       }
     }
@@ -127,7 +164,10 @@ export function createClient({ id, name, watch = false, link }) {
     const haveSeed = client.maze ? client.maze.seed : null;
     const fits = client.maze && client.maze.W === rules.mazeW && client.maze.H === rules.mazeH;
     if (wantSeed !== haveSeed || (wantSeed !== null && !fits) || (client.latest && snap.rn !== client.latest.rn)) {
-      if (wantSeed !== haveSeed || !fits) client.maze = wantSeed === null ? null : buildMaze(wantSeed, rules.mazeW, rules.mazeH);
+      if (wantSeed !== haveSeed || !fits) {
+        client.maze = wantSeed === null ? null : buildMaze(wantSeed, rules.mazeW, rules.mazeH);
+        planted.clear();
+      }
       snaps.length = 0;
       seenEvents.clear();
     }
@@ -148,11 +188,12 @@ export function createClient({ id, name, watch = false, link }) {
       if (seenEvents.has(e[0])) continue;
       seenEvents.add(e[0]);
       // Beim Einstieg mitten in der Runde keine alten Ereignisse nachspielen
-      if (client.latest) client.effects.push({ type: 'catch', id: e[0], tick: e[1], by: e[2], of: e[3], x: e[4], y: e[5] });
+      if (client.latest) client.effects.push({ id: e[0], tick: e[1], kind: e[2], by: e[3], of: e[4], x: e[5], y: e[6], item: e[7] });
     }
 
     if (!client.latest || snap.k > client.latest.k) {
       client.latest = snap;
+      plantHedges(snap);
       if (client.slot >= 0) reconcile(snap);
     }
   }
@@ -163,6 +204,7 @@ export function createClient({ id, name, watch = false, link }) {
     client.lobby = null;
     client.latest = null;
     client.maze = null;
+    planted.clear();
     snaps.length = 0;
     samples.length = 0;
     pending.length = 0;
@@ -237,16 +279,26 @@ export function createClient({ id, name, watch = false, link }) {
     const phase = client.latest ? client.latest.ph : PHASE.LOBBY;
     const playing = client.status === 'in' && client.slot >= 0 && haveMe
       && (phase === PHASE.PLAY || phase === PHASE.COUNTDOWN);
+    if (inputUse(inputCode) && playing) wantUse = true;
+    if (!playing) wantUse = false;
     while (acc >= STEP_MS) {
       acc -= STEP_MS;
       if (!playing) continue;
+      // E zählt nur in einem einzigen Schritt
+      const code = withoutUse(inputCode) + (wantUse ? 18 : 0);
+      wantUse = false;
       seq += 1;
-      pending.push({ seq, code: inputCode });
+      const earlier = pending.some((item) => inputUse(item.code));
+      pending.push({ seq, code });
       if (pending.length > 240) pending.shift();
       copyBody(me, mePrev);
-      const live = client.latest && client.latest.ph === PHASE.PLAY && client.latest.p[client.slot][10] === 0;
-      if (live && client.maze) stepBody(client.maze, me, inputCode, rules);
-      recent.push(inputCode);
+      const arr = client.latest && client.latest.p[client.slot];
+      const live = client.latest && client.latest.ph === PHASE.PLAY && arr[10] === 0;
+      if (live && client.maze) {
+        launch(code, arr[11], earlier);
+        stepBody(client.maze, me, code, rules);
+      }
+      recent.push(code);
       if (recent.length > 8) recent.shift();
       stepsSinceSend += 1;
       const direct = link.direct();
@@ -312,10 +364,11 @@ export function createClient({ id, name, watch = false, link }) {
 
   const view = {
     ready: false, phase: PHASE.LOBBY, round: 0, ticksLeft: 0, tick: 0, maze: null, ringDir: 1, rules: DEFAULT_RULES,
-    slot: -1, prey: -1, hunter: -1,
+    slot: -1, prey: -1, hunter: -1, flip: 0, boxes: [], hedges: [], traps: [],
     players: [0, 1, 2].map((slot) => ({
       slot, x: 0, y: 0, vx: 0, vy: 0, st: 1, ex: false, sp: false, hot: false,
       score: 0, shield: 0, tp: 0, dead: 0, name: WISPS[slot].name, kind: 'bot', online: true, mine: false,
+      item: -1, star: 0, cloak: 0, sight: 0, decoy: 0, ph: 0, fz: 0, frozenBy: 0,
     })),
   };
 
@@ -331,6 +384,11 @@ export function createClient({ id, name, watch = false, link }) {
     view.maze = client.maze;
     view.ringDir = latest.rd;
     view.rules = rules;
+    view.flip = latest.fl || 0;
+    view.boxes = latest.bx || [];
+    view.hedges = latest.hd || [];
+    // Fallen sieht nur, wer sie gelegt hat
+    view.traps = (latest.tr || []).filter((trap) => trap[3] === client.slot);
     view.tick = hostTick;
     view.ticksLeft = Math.max(0, latest.pe - hostTick);
     view.prey = client.slot >= 0 ? preyOf(latest.rd, client.slot) : -1;
@@ -356,6 +414,14 @@ export function createClient({ id, name, watch = false, link }) {
       // Sprung an einen neuen Ort und Auszeit gelten erst, wenn sie auch zu sehen sind.
       out.tp = out.mine ? arr[9] : lerpOut.tp;
       out.dead = out.mine ? arr[10] : lerpOut.dead;
+      out.item = out.mine ? arr[11] : -1; // was die anderen auf Vorrat haben, bleibt verborgen
+      out.star = arr[12] || 0;
+      out.cloak = arr[13] || 0;
+      out.sight = arr[14] || 0;
+      out.decoy = arr[15] || 0;
+      out.ph = out.mine && haveMe ? me.ph : arr[16] || 0;
+      out.fz = out.mine && haveMe ? me.fz : arr[17] || 0;
+      out.frozenBy = arr[18] || 0;
       if (info) {
         out.name = info.name;
         out.kind = info.kind;

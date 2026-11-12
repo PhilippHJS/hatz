@@ -71,7 +71,9 @@
         <li>Wer seine Beute im Sichtkreis hat, läuft schneller. Lauf aus dem Kreis heraus, um zu entkommen.</li>
         <li>Wer gefangen wird, setzt kurz aus und sieht so lange das ganze Feld.</li>
         <li>Sprinten kostet Ausdauer. Wer sich leer sprintet, muss kurz verschnaufen.</li>
+        <li>Mit Items: Leuchtende Kisten geben dir ein Item auf Vorrat, das du mit E auslöst. Was die anderen auf Vorrat haben, siehst du nicht. Wer hinten liegt, bekommt eher starke Items.</li>
       </ul>
+      <ul id="item-list"></ul>
       <p>Bewegen mit WASD oder den Pfeiltasten, sprinten mit der Leertaste oder Shift.</p>
     </details>
 
@@ -82,10 +84,20 @@
     <div id="ring" aria-live="off"></div>
     <div id="timer" aria-label="Restzeit"></div>
     <button type="button" class="quiet" id="b-quit">Verlassen</button>
-    <p id="down" hidden></p>
+    <div id="notes">
+      <p id="down" hidden></p>
+      <p id="flipbar" hidden></p>
+      <ol id="feed" aria-live="polite"></ol>
+    </div>
+    <div id="items" hidden>
+      <div id="effects"></div>
+      <div id="slot"></div>
+    </div>
     <p id="conn"></p>
     <p id="hint">Bewegen mit WASD oder den Pfeiltasten, sprinten mit der Leertaste</p>
   </div>
+
+  <div id="banner" hidden aria-live="assertive"></div>
 
   <div id="count" hidden>
     <p id="count-num"></p>

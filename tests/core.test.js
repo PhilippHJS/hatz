@@ -13,6 +13,9 @@ import {
   SETTINGS, DEFAULT_LEVELS, DEFAULT_RULES, cleanLevels, rulesFor,
 } from '../js/config.js';
 
+// Grundtests ohne Items, damit nichts dazwischenfunkt
+const NO_ITEMS = SETTINGS.map((setting) => (setting.key === 'items' ? 0 : setting.normal));
+
 // Kleinster Abstand der Figur zu irgendeiner Hecke
 function clearance(m, x, y) {
   let best = Infinity;
@@ -192,7 +195,7 @@ test('Bewegung: Sprint kostet Ausdauer und erholt sich', () => {
 
 test('Regeln: Fangen gibt einen Punkt, kostet einen, dann drei Sekunden Auszeit', () => {
   const sim = createSim();
-  startRound(sim, 4242, 60);
+  startRound(sim, 4242, 60, NO_ITEMS);
   assert.equal(sim.phase, PHASE.COUNTDOWN);
   const idle = [[IDLE], [IDLE], [IDLE]];
   const before = sim.players.map((p) => ({ x: p.body.x, y: p.body.y }));
@@ -262,7 +265,7 @@ test('Regeln: Fangen gibt einen Punkt, kostet einen, dann drei Sekunden Auszeit'
 
 test('Regeln: Sichtkreis und Jagdfieber', () => {
   const sim = createSim();
-  startRound(sim, 77, 60);
+  startRound(sim, 77, 60, NO_ITEMS);
   const idle = [[IDLE], [IDLE], [IDLE]];
   for (let t = 0; t < COUNTDOWN_TICKS; t += 1) stepSim(sim, idle);
   const hunter = sim.players[0];
@@ -299,7 +302,7 @@ test('Regeln: Sichtkreis und Jagdfieber', () => {
 
 test('Regeln: Runde endet pünktlich, Rangfolge stimmt', () => {
   const sim = createSim();
-  startRound(sim, 99, 2);
+  startRound(sim, 99, 2, NO_ITEMS);
   const idle = [[IDLE], [IDLE], [IDLE]];
   let ticks = 0;
   while (sim.phase !== PHASE.END && ticks < 10000) {
@@ -314,7 +317,7 @@ test('Bots: jagen, fliehen und fangen sich gegenseitig', () => {
   let catches = 0;
   for (let seed = 1; seed <= 6; seed += 1) {
     const sim = createSim();
-    startRound(sim, seed * 31337, 120);
+    startRound(sim, seed * 31337, 120, NO_ITEMS);
     const bots = [0, 1, 2].map((slot) => createBot(slot, seed));
     const moved = [0, 0, 0];
     while (sim.phase !== PHASE.END) {
@@ -334,28 +337,32 @@ test('Bots: jagen, fliehen und fangen sich gegenseitig', () => {
 });
 
 // Stufen in der Reihenfolge von SETTINGS: Tempo, Sichtkreis, Labyrinth, Ausdauer, Auszeit, Jagdfieber
-const levelsOf = (changes) => SETTINGS.map((setting) => (setting.key in changes ? changes[setting.key] : 1));
+const levelsOf = (changes) => SETTINGS.map((setting) => (setting.key in changes ? changes[setting.key] : setting.key === 'items' ? 0 : setting.normal));
 
 test('Einstellungen: Stufen werden zu Regeln', () => {
-  assert.deepEqual(SETTINGS.map((setting) => setting.key), ['speed', 'vision', 'maze', 'stamina', 'respawn', 'fever']);
+  assert.deepEqual(SETTINGS.map((setting) => setting.key), ['items', 'speed', 'vision', 'maze', 'stamina', 'respawn', 'fever']);
   for (const setting of SETTINGS) {
-    assert.equal(setting.options.length, 3, setting.key);
-    assert.equal(setting.values.length, 3, setting.key);
+    assert.equal(setting.options.length, setting.key === 'items' ? 2 : 3, setting.key);
+    assert.equal(setting.values.length, setting.options.length, setting.key);
+    assert.equal(setting.normal, 1, setting.key);
   }
-  // Die mittlere Stufe ist das bisherige Spiel.
+  // Die mittlere Stufe ist das bisherige Spiel, Items sind von Anfang an an.
   assert.deepEqual(DEFAULT_RULES, {
     speed: 1, vision: VISION_RADIUS, mazeW: MAZE_W, mazeH: MAZE_H,
-    sprintSeconds: SPRINT_SECONDS, respawnTicks: RESPAWN_TICKS, huntBoost: HUNT_BOOST,
+    sprintSeconds: SPRINT_SECONDS, respawnTicks: RESPAWN_TICKS, huntBoost: HUNT_BOOST, items: true,
   });
   const low = rulesFor(SETTINGS.map(() => 0));
-  const high = rulesFor(SETTINGS.map(() => 2));
+  const high = rulesFor(SETTINGS.map((setting) => setting.options.length - 1));
   for (const key of Object.keys(DEFAULT_RULES)) {
+    if (key === 'items') continue;
     assert.ok(low[key] < DEFAULT_RULES[key] && DEFAULT_RULES[key] < high[key], `${key}: ${low[key]} < ${DEFAULT_RULES[key]} < ${high[key]}`);
   }
+  assert.equal(low.items, false);
+  assert.equal(high.items, true);
   assert.equal(low.huntBoost, 1, 'Jagdfieber aus heißt kein Vorteil');
-  // Unsinn von außen wird zur mittleren Stufe.
+  // Unsinn von außen wird zur normalen Stufe.
   assert.deepEqual(cleanLevels(undefined), DEFAULT_LEVELS);
-  assert.deepEqual(cleanLevels([2, -1, 7, 'x', 1.5, 0, 2, 2]), [2, 1, 1, 1, 1, 0]);
+  assert.deepEqual(cleanLevels([2, 2, -1, 7, 'x', 1.5, 0, 2, 2]), [1, 2, 1, 1, 1, 1, 0]);
   assert.deepEqual(rulesFor('quatsch'), DEFAULT_RULES);
 });
 
@@ -455,6 +462,7 @@ test('Einstellungen: gelten für die Runde, mit der sie gestartet wurde', () => 
   startRound(sim, 2025, 60);
   assert.equal(sim.maze.W, MAZE_W);
   assert.deepEqual(sim.rules, DEFAULT_RULES);
+  assert.equal(sim.rules.items, true, 'ohne Angabe sind Items an');
 });
 
 test('Einstellungen: Bots kommen mit jeder Stufe zurecht', () => {

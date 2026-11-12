@@ -11,8 +11,10 @@ const PROBE = 0.06;
 const R2 = HIT_R * HIT_R;
 const MIN_RUN = WALK_SPEED * DT * 0.3;
 
+// ph: Schritte, die die Rakete noch durch Hecken trägt
+// fz: Schritte, die die Figur noch gelähmt ist (Blitz oder Falle)
 export function newBody(x, y) {
-  return { x, y, vx: 0, vy: 0, st: 1, ex: false, rw: 0, sp: false, hot: false };
+  return { x, y, vx: 0, vy: 0, st: 1, ex: false, rw: 0, sp: false, hot: false, ph: 0, fz: 0 };
 }
 
 export function copyBody(from, to = {}) {
@@ -25,15 +27,21 @@ export function copyBody(from, to = {}) {
   to.rw = from.rw;
   to.sp = from.sp;
   to.hot = from.hot;
+  to.ph = from.ph;
+  to.fz = from.fz;
   return to;
 }
 
-// Eingabe als eine Zahl: Richtung links/rechts, hoch/runter und Sprint.
-export const packInput = (mx, my, sprint) => (mx + 1) + 3 * (my + 1) + (sprint ? 9 : 0);
+// Eingabe als eine Zahl: Richtung links/rechts, hoch/runter, Sprint und
+// Item auslösen (nur in dem einen Schritt, in dem E gedrückt wurde).
+export const packInput = (mx, my, sprint, use = false) => (mx + 1) + 3 * (my + 1) + (sprint ? 9 : 0) + (use ? 18 : 0);
 export const IDLE = packInput(0, 0, false);
+export const MAX_INPUT = 35;
 export const inputX = (code) => (code % 3) - 1;
 export const inputY = (code) => (Math.floor(code / 3) % 3) - 1;
-export const inputSprint = (code) => code >= 9;
+export const inputSprint = (code) => Math.floor(code / 9) % 2 === 1;
+export const inputUse = (code) => code >= 18;
+export const withoutUse = (code) => code % 18;
 
 // Schiebt den Punkt o aus allen Hecken in der Nähe heraus. Ist `body` gesetzt,
 // verliert es dabei das Tempo, das in die Hecke hinein zeigt.
@@ -132,6 +140,16 @@ function sidestep(m, b, dx, dy) {
 
 // `rules` sind die Regeln der Runde (Tempo, Jagdfieber, Ausdauer).
 export function stepBody(m, b, code, rules = DEFAULT_RULES) {
+  if (b.fz > 0) {
+    // gelähmt: steht still, erholt sich aber
+    b.fz -= 1;
+    b.vx = 0;
+    b.vy = 0;
+    b.sp = false;
+    recover(b);
+    return b;
+  }
+  if (b.ph > 0) return flyBody(m, b, code, rules);
   let wx = inputX(code);
   let wy = inputY(code);
   if (wx !== 0 && wy !== 0) {
@@ -188,10 +206,64 @@ export function stepBody(m, b, code, rules = DEFAULT_RULES) {
       b.ex = true;
     }
   } else {
-    if (b.rw > 0) b.rw -= 1;
-    else if (b.st < 1) b.st = Math.min(1, b.st + DT / REGEN_SECONDS);
-    if (b.ex && b.st >= RECOVER_AT) b.ex = false;
+    recover(b);
   }
   b.sp = running;
   return b;
+}
+
+function recover(b) {
+  if (b.rw > 0) b.rw -= 1;
+  else if (b.st < 1) b.st = Math.min(1, b.st + DT / REGEN_SECONDS);
+  if (b.ex && b.st >= RECOVER_AT) b.ex = false;
+}
+
+// Rakete: geradewegs durch Hecken, nur der Rand des Gartens hält. Endet der
+// Flug in einer Hecke, landet die Figur in der Mitte ihres Feldes.
+function flyBody(m, b, code, rules) {
+  const wx = inputX(code);
+  const wy = inputY(code);
+  const moving = wx !== 0 || wy !== 0;
+  const sprinting = inputSprint(code) && moving && !b.ex && b.st > 0;
+  const speed = (sprinting ? SPRINT_SPEED : WALK_SPEED) * rules.speed * (b.hot ? rules.huntBoost : 1) * (wx !== 0 && wy !== 0 ? DIAG : 1);
+  b.vx += (wx * speed - b.vx) * ACCEL;
+  b.vy += (wy * speed - b.vy) * ACCEL;
+  if (!moving && b.vx * b.vx + b.vy * b.vy < 1e-4) {
+    b.vx = 0;
+    b.vy = 0;
+  }
+  b.x = Math.min(Math.max(b.x + b.vx * DT, HIT_R), m.W - HIT_R);
+  b.y = Math.min(Math.max(b.y + b.vy * DT, HIT_R), m.H - HIT_R);
+  if (sprinting) {
+    b.st -= DT / rules.sprintSeconds;
+    b.rw = REGEN_DELAY;
+    if (b.st <= 0) {
+      b.st = 0;
+      b.ex = true;
+    }
+  } else {
+    recover(b);
+  }
+  b.sp = sprinting;
+  b.ph -= 1;
+  if (b.ph === 0) {
+    probe.x = b.x;
+    probe.y = b.y;
+    pushOut(m, probe, null);
+    if (probe.x !== b.x || probe.y !== b.y) {
+      b.x = Math.floor(b.x) + 0.5;
+      b.y = Math.floor(b.y) + 0.5;
+      b.vx = 0;
+      b.vy = 0;
+    }
+  }
+  return b;
+}
+
+// Steckt die Figur in einer Hecke? (zum Beispiel, weil eine Hecke auf ihr gewachsen ist)
+export function inHedge(m, x, y) {
+  probe.x = x;
+  probe.y = y;
+  pushOut(m, probe, null);
+  return probe.x !== x || probe.y !== y;
 }

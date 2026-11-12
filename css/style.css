@@ -62,8 +62,10 @@ body {
   display: none !important;
 }
 
-/* unten der ruhende, dunkle Garten, darüber alles, was sich bewegt */
+/* unten der ruhende, dunkle Garten, darüber der helle (nur eingeblendet, wenn
+   man das ganze Feld sieht), zuoberst alles, was sich bewegt */
 #floor,
+#wide,
 #stage {
   position: fixed;
   inset: 0;
@@ -443,6 +445,11 @@ button.quiet:hover {
   color: var(--moon-dim);
 }
 
+#wide {
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
 #timer {
   position: absolute;
   top: 0.35rem;
@@ -456,6 +463,36 @@ button.quiet:hover {
 }
 #timer.soon {
   color: var(--alarm);
+}
+
+/* Hinweis während der Auszeit nach einem Fang */
+#down {
+  position: absolute;
+  top: 4.4rem;
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 0.35rem 1rem 0.45rem;
+  border-radius: 0.6rem;
+  background: rgba(16, 26, 48, 0.86);
+  box-shadow: inset 0 0 0 2px var(--line);
+  font-size: 1.2rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+#down b {
+  font-weight: 700;
+}
+#down .secs {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 1.7rem;
+  line-height: 1;
+  margin-left: 0.25rem;
+}
+
+#ring .chip.out {
+  opacity: 0.45;
 }
 
 #b-quit {
@@ -538,6 +575,7 @@ button.quiet:hover {
 
 @media (prefers-reduced-motion: reduce) {
   #scrim,
+  #wide,
   #hint {
     transition: none;
   }

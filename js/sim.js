@@ -2,14 +2,18 @@
 // noch Netzwerk: Eingaben rein, neuer Spielstand raus.
 //
 // Jeder jagt genau einen Mitspieler und wird vom anderen gejagt. Wer seine
-// Beute berührt, bekommt einen Punkt, die Beute verliert einen und steigt an
-// einer entfernten Stelle wieder ein. Alle sind gleich schnell, nur wer seine
-// Beute gerade sieht, läuft etwas schneller. Sonst käme nie jemand heran.
+// Beute berührt, bekommt einen Punkt, die Beute verliert einen
+// Punkt. Sie setzt drei Sekunden aus, sieht so lange das ganze Feld und steigt
+// dann an einer entfernten Stelle wieder ein. Alle sind gleich schnell, nur
+// wer seine Beute gerade im Sichtkreis hat, läuft etwas schneller. Sonst käme
+// nie jemand heran.
 
-import { buildMaze, cellAt, cellX, cellY, pathDist, canSee } from './maze.js';
+import { buildMaze, cellAt, cellX, cellY, pathDist } from './maze.js';
 import { makeRng } from './rng.js';
 import { newBody, stepBody } from './physics.js';
-import { CATCH_DIST, SHIELD_TICKS, COUNTDOWN_TICKS, ROUND_SECONDS, TICK_RATE, VISION_RADIUS } from './config.js';
+import {
+  CATCH_DIST, SHIELD_TICKS, RESPAWN_TICKS, COUNTDOWN_TICKS, ROUND_SECONDS, TICK_RATE, VISION_RADIUS,
+} from './config.js';
 
 export const PHASE = { LOBBY: 0, COUNTDOWN: 1, PLAY: 2, END: 3 };
 const EVENT_TICKS = 3 * TICK_RATE; // so lange bleibt ein Ereignis in den Meldungen
@@ -25,7 +29,8 @@ export function createSim() {
     maze: null,
     rng: null,
     ringDir: 1,
-    players: [0, 1, 2].map((slot) => ({ slot, body: newBody(0, 0), score: 0, shield: 0, tp: 0 })),
+    // dead: Schritte bis zum Wiedereinstieg, 0 heißt im Spiel
+    players: [0, 1, 2].map((slot) => ({ slot, body: newBody(0, 0), score: 0, shield: 0, dead: 0, tp: 0 })),
     events: [],
     nextEvent: 1,
   };
@@ -33,6 +38,14 @@ export function createSim() {
 
 export const preyOf = (ringDir, slot) => (slot + ringDir + 3) % 3;
 export const hunterOf = (ringDir, slot) => (slot - ringDir + 3) % 3;
+
+// Sieht a den Mitspieler b? Beide müssen im Spiel sein und b im Sichtkreis von a.
+export function sees(a, b) {
+  if (a.dead > 0 || b.dead > 0) return false;
+  const dx = a.body.x - b.body.x;
+  const dy = a.body.y - b.body.y;
+  return dx * dx + dy * dy <= VISION_RADIUS * VISION_RADIUS;
+}
 
 function place(sim, player, cell) {
   const tp = player.tp + 1;
@@ -67,6 +80,7 @@ export function startRound(sim, seed, seconds = ROUND_SECONDS) {
     place(sim, player, best[slot]);
     player.score = 0;
     player.shield = 0;
+    player.dead = 0;
   });
   sim.phase = PHASE.COUNTDOWN;
   sim.phaseEnd = sim.tick + COUNTDOWN_TICKS;
@@ -101,13 +115,21 @@ export function stepSim(sim, inputs) {
   }
   if (sim.phase !== PHASE.PLAY) return;
 
+  // Auszeit läuft ab: wieder einsteigen
+  for (const player of sim.players) {
+    if (player.dead > 0) {
+      player.dead -= 1;
+      if (player.dead === 0) respawn(sim, player.slot);
+    }
+  }
+
   // Jagdfieber: Wer seine Beute sieht, ist in diesem Schritt schneller.
   for (const hunter of sim.players) {
     const prey = sim.players[preyOf(sim.ringDir, hunter.slot)];
-    hunter.body.hot = prey.shield === 0
-      && canSee(sim.maze, hunter.body.x, hunter.body.y, prey.body.x, prey.body.y, VISION_RADIUS);
+    hunter.body.hot = prey.shield === 0 && sees(hunter, prey);
   }
   for (const player of sim.players) {
+    if (player.dead > 0) continue;
     const list = inputs[player.slot];
     if (list) for (const code of list) stepBody(sim.maze, player.body, code);
   }
@@ -115,7 +137,7 @@ export function stepSim(sim, inputs) {
   const caught = [];
   for (const hunter of sim.players) {
     const prey = sim.players[preyOf(sim.ringDir, hunter.slot)];
-    if (prey.shield > 0) continue;
+    if (hunter.dead > 0 || prey.dead > 0 || prey.shield > 0) continue;
     const dx = hunter.body.x - prey.body.x;
     const dy = hunter.body.y - prey.body.y;
     if (dx * dx + dy * dy < CATCH_DIST * CATCH_DIST) caught.push([hunter, prey]);
@@ -126,7 +148,13 @@ export function stepSim(sim, inputs) {
     sim.events.push({ id: sim.nextEvent, tick: sim.tick, by: hunter.slot, of: prey.slot, x: prey.body.x, y: prey.body.y });
     sim.nextEvent += 1;
   }
-  for (const [, prey] of caught) respawn(sim, prey.slot);
+  for (const [, prey] of caught) {
+    prey.dead = RESPAWN_TICKS;
+    prey.body.vx = 0;
+    prey.body.vy = 0;
+    prey.body.sp = false;
+    prey.body.hot = false;
+  }
 
   for (const player of sim.players) if (player.shield > 0) player.shield -= 1;
   while (sim.events.length && sim.tick - sim.events[0].tick > EVENT_TICKS) sim.events.shift();

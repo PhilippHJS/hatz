@@ -6,9 +6,9 @@ import assert from 'node:assert/strict';
 import { createHost, createLoopback } from '../js/host.js';
 import { createClient } from '../js/client.js';
 import { packInput, IDLE } from '../js/physics.js';
-import { PHASE } from '../js/sim.js';
+import { PHASE, hunterOf } from '../js/sim.js';
 import { makeRng } from '../js/rng.js';
-import { COUNTDOWN_TICKS, TICK_RATE } from '../js/config.js';
+import { COUNTDOWN_TICKS, TICK_RATE, RESPAWN_TICKS } from '../js/config.js';
 
 // Eine Welt mit eigener Uhr. `net` beschreibt die Leitung der Mitspieler.
 function world({ net, guests = 2, seconds = 20, seed = 1 }) {
@@ -168,6 +168,49 @@ test('Vorhersage: ohne Verlust weicht die eigene Figur nie sichtbar ab', (t) => 
   // Abweichungen entstehen nur, wenn das Jagdfieber umschaltet oder jemand gefangen wird
   t.diagnostic(`größte Abweichung ${worst.toFixed(4)} Felder`);
   assert.ok(worst < 0.12, `Abweichung bis ${worst.toFixed(4)} Felder`);
+});
+
+test('Auszeit: Gefangene stehen still und steigen bei allen gleich wieder ein', () => {
+  const w = world({ net: ROUGH, seconds: 60, seed: 21 });
+  w.run(2500);
+  w.host.start();
+  w.run((COUNTDOWN_TICKS / TICK_RATE) * 1000 + 400);
+  const sim = w.host.sim;
+  const guest = w.clients[1];
+  const other = w.clients[2];
+  const me = sim.players[guest.slot];
+  const hunter = sim.players[hunterOf(sim.ringDir, guest.slot)];
+  const off = (client) => {
+    const mine = client.debug().me;
+    const truth = sim.players[client.slot].body;
+    return Math.hypot(mine.x - truth.x, mine.y - truth.y);
+  };
+
+  // Der Gast rennt gerade, als sein Jäger ihn erwischt, und hält die Tasten weiter gedrückt.
+  w.inputs[1] = packInput(1, 1, true);
+  w.run(500);
+  hunter.body.x = me.body.x;
+  hunter.body.y = me.body.y;
+  w.run(700);
+  assert.ok(me.dead > 0 && me.dead < RESPAWN_TICKS);
+  assert.ok(guest.view(w.now()).players[guest.slot].dead > 0, 'der Gast weiß, dass er aussetzt');
+  assert.ok(off(guest) < 1e-9, `eigene Figur steht am Ort des Fangs (${off(guest)})`);
+  assert.ok(other.view(w.now()).players[guest.slot].dead > 0, 'die anderen sehen ihn nicht mehr');
+  assert.equal(guest.effects.filter((e) => e.type === 'catch').length, 1);
+
+  // drei Sekunden später ist er wieder da, bei allen am selben Ort
+  w.run((RESPAWN_TICKS / TICK_RATE) * 1000);
+  assert.equal(me.dead, 0);
+  w.run(600);
+  assert.ok(Math.hypot(me.body.vx, me.body.vy) > 1 || me.body.x !== 0, 'nach dem Einstieg läuft er mit den gehaltenen Tasten weiter');
+  w.inputs.fill(IDLE);
+  w.run(1500);
+  for (const c of w.clients) {
+    assert.ok(off(c) < 1e-9, `Platz ${c.slot} steht ${off(c)} daneben`);
+    const seen = c.view(w.now()).players[guest.slot];
+    assert.equal(seen.dead, 0);
+    assert.ok(Math.hypot(seen.x - me.body.x, seen.y - me.body.y) < 1e-6);
+  }
 });
 
 test('Wer weg ist, wird vom Bot vertreten und bekommt seinen Platz zurück', () => {

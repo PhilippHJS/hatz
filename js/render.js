@@ -1,15 +1,15 @@
-// Zeichnet das Spiel auf die Leinwand: nächtlicher Irrgarten, hell ist nur,
-// was die eigene Figur sieht.
+// Zeichnet das Spiel auf die Leinwand: nächtlicher Irrgarten, hell ist nur
+// der Sichtkreis um die eigene Figur. Wer darin ist, wird gesehen.
 //
 // Der Garten wird zweimal vorab gemalt, einmal im Dunkeln und einmal im
-// Mondlicht. Die dunkle Fassung liegt als eigenes, ruhendes Bild ganz unten.
-// Pro Bild wird darüber nur das Sichtfeld aus der hellen Fassung
-// ausgeschnitten, dazu kommen die Irrlichter und Effekte. So bleibt der
-// Aufwand pro Bild klein, auch auf großen Bildschirmen ohne schnelle Grafik.
+// Mondlicht. Beide Fassungen liegen als ruhende Bilder unter der Spielfläche,
+// die helle ist nur eingeblendet, wenn man das ganze Feld sieht (in der
+// Auszeit nach einem Fang und am Rundenende). Pro Bild wird sonst nur der
+// Sichtkreis aus der hellen Fassung ausgeschnitten, dazu kommen die
+// Irrlichter und Effekte. So bleibt der Aufwand pro Bild klein, auch auf
+// großen Bildschirmen ohne schnelle Grafik.
 
-import { WISPS, PLAYER_R, WALL_T, VISION_RADIUS, TICK_RATE, SHIELD_TICKS } from './config.js';
-import { visibility, wallPosts } from './vision.js';
-import { canSee } from './maze.js';
+import { WISPS, PLAYER_R, WALL_T, VISION_RADIUS, TICK_RATE, SHIELD_TICKS, RESPAWN_TICKS, RECOVER_AT } from './config.js';
 import { PHASE } from './sim.js';
 import { makeRng } from './rng.js';
 
@@ -26,10 +26,12 @@ const THEME = {
 };
 const TAU = Math.PI * 2;
 
-// `canvas` zeigt alles, was sich bewegt, `back` darunter den dunklen Garten.
-export function createRenderer(canvas, back) {
+// `canvas` zeigt alles, was sich bewegt. Darunter liegen `back` mit dem
+// dunklen Garten und `wide` mit dem hellen, der bei Bedarf eingeblendet wird.
+export function createRenderer(canvas, back, wide) {
   const ctx = canvas.getContext('2d');
   const backCtx = back.getContext('2d');
+  const wideCtx = wide.getContext('2d');
   const lit = document.createElement('canvas');
   const dark = document.createElement('canvas');
   const litCtx = lit.getContext('2d');
@@ -46,12 +48,11 @@ export function createRenderer(canvas, back) {
   let insets = { top: 0, right: 0, bottom: 0, left: 0 };
   let painted = ''; // wofür die beiden Fassungen gerade gemalt sind
   let maze = null;
-  let posts = null;
   let lastNow = 0;
   let round = -1;
 
   const actors = [0, 1, 2].map(() => ({
-    alpha: 0, trail: [], lookX: 0, lookY: 1, blink: 2 + Math.random() * 3, tp: -1, wob: Math.random() * 10, calmFor: 9,
+    alpha: 0, trail: [], lookX: 0, lookY: 1, blink: 2 + Math.random() * 3, tp: -1, wob: Math.random() * 10,
   }));
   const particles = [];
   const pops = [];
@@ -60,7 +61,7 @@ export function createRenderer(canvas, back) {
   let lastJolt = '';
   let flash = 0;
   let flashColor = '#fff';
-  const poly = [];
+  let wideShown = null;
 
   function resize() {
     const rect = canvas.getBoundingClientRect();
@@ -72,6 +73,8 @@ export function createRenderer(canvas, back) {
     canvas.height = Math.round(ch * dpr);
     back.width = canvas.width;
     back.height = canvas.height;
+    wide.width = canvas.width;
+    wide.height = canvas.height;
     painted = '';
   }
 
@@ -184,42 +187,25 @@ export function createRenderer(canvas, back) {
     if (key === painted) return;
     painted = key;
     maze = m;
-    posts = wallPosts(m);
     layout(m);
     paintScene(litCtx, lit, m, true);
     paintScene(darkCtx, dark, m, false);
     backCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
     backCtx.clearRect(0, 0, cw, ch);
     backCtx.drawImage(dark, ox - pad, oy - pad, dark.width / dpr, dark.height / dpr);
+    wideCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    wideCtx.clearRect(0, 0, cw, ch);
+    wideCtx.drawImage(lit, ox - pad, oy - pad, lit.width / dpr, lit.height / dpr);
   }
 
   const sx = (x) => ox + x * s;
   const sy = (y) => oy + y * s;
 
-  // Hängt das Sichtfeld um (px, py) als Umriss an den aktuellen Pfad an und
-  // merkt sich, welchen Bereich alle Sichtfelder zusammen überdecken.
-  const lightBox = { x0: 0, y0: 0, x1: 0, y1: 0 };
-  function addLight(px, py, radius) {
-    visibility(maze, posts, px, py, radius, poly);
-    for (let i = 0; i < poly.length; i += 2) {
-      const x = poly[i];
-      const y = poly[i + 1];
-      if (i === 0) ctx.moveTo(sx(x), sy(y));
-      else ctx.lineTo(sx(x), sy(y));
-      if (x < lightBox.x0) lightBox.x0 = x;
-      if (x > lightBox.x1) lightBox.x1 = x;
-      if (y < lightBox.y0) lightBox.y0 = y;
-      if (y > lightBox.y1) lightBox.y1 = y;
-    }
-    ctx.closePath();
-  }
-
-  // Sieht `me` die Stelle (x, y)? Etwas großzügig, damit niemand am Rand flackert.
+  // Liegt die Stelle (x, y) im Sichtkreis von `me`? Dieselbe Regel wie im Spiel.
   function inSight(me, x, y) {
-    if (canSee(maze, me.x, me.y, x, y, VISION_RADIUS)) return true;
-    const d = PLAYER_R * 0.8;
-    return canSee(maze, me.x, me.y, x + d, y, VISION_RADIUS) || canSee(maze, me.x, me.y, x - d, y, VISION_RADIUS)
-      || canSee(maze, me.x, me.y, x, y + d, VISION_RADIUS) || canSee(maze, me.x, me.y, x, y - d, VISION_RADIUS);
+    const dx = me.x - x;
+    const dy = me.y - y;
+    return dx * dx + dy * dy <= VISION_RADIUS * VISION_RADIUS;
   }
 
   function blobPath(x, y, r, lobes, wob, now) {
@@ -321,6 +307,25 @@ export function createRenderer(canvas, back) {
     ctx.globalAlpha = 1;
   }
 
+  // Die eigene Figur in der Auszeit: blasser Schatten am Ort des Fangs, der
+  // Ring darum läuft ab, bis es weitergeht.
+  function drawGhost(p, actor, now, dt) {
+    drawWisp(p, actor, 0.3, now, dt);
+    const x = sx(p.x);
+    const y = sy(p.y);
+    const r = PLAYER_R * s;
+    ctx.lineCap = 'round';
+    ctx.lineWidth = Math.max(2.5, s * 0.055);
+    ctx.strokeStyle = 'rgba(242, 240, 221, 0.25)';
+    ctx.beginPath();
+    ctx.arc(x, y, r * 1.7, 0, TAU);
+    ctx.stroke();
+    ctx.strokeStyle = THEME.moon;
+    ctx.beginPath();
+    ctx.arc(x, y, r * 1.7, -Math.PI / 2, -Math.PI / 2 + TAU * Math.min(1, p.dead / RESPAWN_TICKS));
+    ctx.stroke();
+  }
+
   function label(text, x, y, size, alpha, weight = 700) {
     ctx.font = `${weight} ${size}px "Alegreya Sans", system-ui, sans-serif`;
     ctx.textAlign = 'center';
@@ -371,32 +376,42 @@ export function createRenderer(canvas, back) {
     label(role === 'prey' ? 'deine Beute' : 'jagt dich', x, y + r * 2.2 + size * 1.05, size * 0.82, alpha * 0.8, 500);
   }
 
-  function drawOwnMarks(me, actor, prey, preyAlpha, now, dt, phase) {
+  function drawOwnMarks(me, prey, preyAlpha, now, phase) {
     const x = sx(me.x);
     const y = sy(me.y);
     const r = PLAYER_R * s;
 
-    // Ausdauer als Bogen um die Figur, blendet aus, wenn sie voll ist
-    actor.calmFor = me.st >= 1 ? actor.calmFor + dt : 0;
-    const show = Math.max(0, Math.min(1, 1.6 - actor.calmFor * 2));
-    if (show > 0) {
-      ctx.lineCap = 'round';
-      ctx.lineWidth = Math.max(2, s * 0.05);
-      ctx.globalAlpha = show * 0.28;
-      ctx.strokeStyle = THEME.moon;
+    // Ausdauer als Balken unter der Figur: hell auf dunklem Grund, damit er sich
+    // vom Rasen und von den Hecken abhebt. Wird sie knapp, färbt er sich gelb,
+    // leer gesprintet rot mit der Marke, ab der es wieder geht.
+    const w = Math.max(54, s * 1.2);
+    const h = Math.max(8, s * 0.15);
+    const left = x - w / 2;
+    const top = y + r * 1.55;
+    const full = me.st >= 0.999;
+    const blink = me.ex && !calm && Math.floor(now / 160) % 2 === 0;
+    ctx.globalAlpha = full ? 0.85 : 1;
+    ctx.fillStyle = 'rgba(16, 26, 48, 0.95)';
+    ctx.beginPath();
+    ctx.roundRect(left - 3, top - 3, w + 6, h + 6, (h + 6) / 2);
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = me.ex ? THEME.alarm : 'rgba(242, 240, 221, 0.85)';
+    ctx.stroke();
+    if (me.st > 0.01) {
+      ctx.fillStyle = me.ex ? (blink ? '#ffb1a6' : THEME.alarm) : me.st < 0.3 ? '#f3c95a' : THEME.moon;
       ctx.beginPath();
-      ctx.arc(x, y, r * 1.55, 0, TAU);
-      ctx.stroke();
-      ctx.globalAlpha = show * 0.95;
-      ctx.strokeStyle = me.ex ? THEME.alarm : THEME.moon;
-      ctx.beginPath();
-      ctx.arc(x, y, r * 1.55, -Math.PI / 2, -Math.PI / 2 + TAU * Math.max(me.st, 0.001));
-      ctx.stroke();
-      ctx.globalAlpha = 1;
+      ctx.roundRect(left, top, Math.max(h, w * me.st), h, h / 2);
+      ctx.fill();
     }
+    if (me.ex) {
+      ctx.fillStyle = THEME.moon;
+      ctx.fillRect(left + w * RECOVER_AT - 1, top - 1, 2, h + 2);
+    }
+    ctx.globalAlpha = 1;
 
     // Pfeil zur Beute, in ihrer Farbe
-    if (prey && phase !== PHASE.END) {
+    if (prey && prey.dead === 0 && phase !== PHASE.END) {
       const dx = prey.x - me.x;
       const dy = prey.y - me.y;
       const d = Math.sqrt(dx * dx + dy * dy);
@@ -492,7 +507,8 @@ export function createRenderer(canvas, back) {
     if (!maze || e.type !== 'catch') return;
     const me = view.slot >= 0 ? view.players[view.slot] : null;
     const involved = me && (e.by === view.slot || e.of === view.slot);
-    if (!spectate && !involved && !(me && inSight(me, e.x, e.y))) return;
+    const everything = spectate || view.phase === PHASE.END || (me && me.dead > 0);
+    if (!everything && !involved && !(me && inSight(me, e.x, e.y))) return;
     const color = WISPS[e.of].color;
     const rng = Math.random;
     for (let i = 0; i < (calm ? 8 : 28); i += 1) {
@@ -528,7 +544,8 @@ export function createRenderer(canvas, back) {
     ensureScene(view.maze);
 
     const me = !spectate && view.slot >= 0 ? view.players[view.slot] : null;
-    const allLit = spectate || !me || view.phase === PHASE.END;
+    // Das ganze Feld sieht, wer gerade aussetzt, und jeder am Rundenende.
+    const whole = !spectate && (!me || me.dead > 0 || view.phase === PHASE.END);
     if (view.round !== round) {
       round = view.round;
       particles.length = 0;
@@ -540,7 +557,7 @@ export function createRenderer(canvas, back) {
       }
     }
 
-    // Erschütterung, wenn man fängt oder gefangen wird: beide Bilder rücken gemeinsam
+    // Erschütterung, wenn man fängt oder gefangen wird: alle Bilder rücken gemeinsam
     let jolt = '';
     if (shake > 0 && !calm) {
       const jx = (Math.random() - 0.5) * shake * s * 0.22;
@@ -552,60 +569,86 @@ export function createRenderer(canvas, back) {
       lastJolt = jolt;
       canvas.style.transform = jolt;
       back.style.transform = jolt;
+      wide.style.transform = jolt;
     }
 
-    // Sichtfeld: nur dort die helle Fassung des Gartens zeigen
-    ctx.save();
-    ctx.beginPath();
-    lightBox.x0 = Infinity;
-    lightBox.y0 = Infinity;
-    lightBox.x1 = -Infinity;
-    lightBox.y1 = -Infinity;
-    if (allLit) for (const p of view.players) addLight(p.x, p.y, VISION_RADIUS);
-    else addLight(me.x, me.y, VISION_RADIUS);
-    ctx.clip();
-    // nur den Ausschnitt der hellen Fassung übertragen, den die Sichtfelder brauchen
-    const px0 = Math.max(0, Math.floor((pad + lightBox.x0 * s) * dpr) - 2);
-    const py0 = Math.max(0, Math.floor((pad + lightBox.y0 * s) * dpr) - 2);
-    const px1 = Math.min(lit.width, Math.ceil((pad + lightBox.x1 * s) * dpr) + 2);
-    const py1 = Math.min(lit.height, Math.ceil((pad + lightBox.y1 * s) * dpr) + 2);
-    if (px1 > px0 && py1 > py0) {
-      ctx.drawImage(lit, px0, py0, px1 - px0, py1 - py0, ox - pad + px0 / dpr, oy - pad + py0 / dpr, (px1 - px0) / dpr, (py1 - py0) / dpr);
+    if (whole !== wideShown) {
+      wideShown = whole;
+      wide.style.opacity = whole ? '1' : '0';
     }
-    if (!allLit) {
-      // zum Rand der Sichtweite hin verliert sich das Licht im Dunkeln
-      const fade = ctx.createRadialGradient(sx(me.x), sy(me.y), 0, sx(me.x), sy(me.y), VISION_RADIUS * s);
-      fade.addColorStop(0, 'rgba(21, 35, 63, 0)');
-      fade.addColorStop(0.5, 'rgba(21, 35, 63, 0)');
-      fade.addColorStop(0.82, 'rgba(21, 35, 63, 0.5)');
-      fade.addColorStop(1, 'rgba(21, 35, 63, 0.92)');
-      ctx.fillStyle = fade;
-      ctx.fillRect(sx(lightBox.x0) - 2, sy(lightBox.y0) - 2, (lightBox.x1 - lightBox.x0) * s + 4, (lightBox.y1 - lightBox.y0) * s + 4);
+
+    // Sichtkreise: nur dort die helle Fassung des Gartens zeigen
+    const R = VISION_RADIUS * s;
+    if (!whole) {
+      const lights = me ? [me] : view.players.filter((p) => p.dead === 0);
+      // nichts davon reicht über den Garten hinaus
+      ctx.save();
+      ctx.beginPath();
+      ctx.roundRect(sx(-0.12), sy(-0.12), (maze.W + 0.24) * s, (maze.H + 0.24) * s, 0.22 * s);
+      ctx.clip();
+      ctx.save();
+      ctx.beginPath();
+      for (const p of lights) {
+        ctx.moveTo(sx(p.x) + R, sy(p.y));
+        ctx.arc(sx(p.x), sy(p.y), R, 0, TAU);
+      }
+      ctx.clip();
+      for (const p of lights) {
+        // nur den Ausschnitt der hellen Fassung übertragen, den der Kreis braucht
+        const px0 = Math.max(0, Math.floor((pad + (p.x - VISION_RADIUS) * s) * dpr) - 2);
+        const py0 = Math.max(0, Math.floor((pad + (p.y - VISION_RADIUS) * s) * dpr) - 2);
+        const px1 = Math.min(lit.width, Math.ceil((pad + (p.x + VISION_RADIUS) * s) * dpr) + 2);
+        const py1 = Math.min(lit.height, Math.ceil((pad + (p.y + VISION_RADIUS) * s) * dpr) + 2);
+        if (px1 > px0 && py1 > py0) {
+          ctx.drawImage(lit, px0, py0, px1 - px0, py1 - py0, ox - pad + px0 / dpr, oy - pad + py0 / dpr, (px1 - px0) / dpr, (py1 - py0) / dpr);
+        }
+      }
+      for (const p of lights) {
+        const cx = sx(p.x);
+        const cy = sy(p.y);
+        if (me) {
+          // zum Rand hin etwas dunkler, der Rand selbst bleibt eine klare Kante
+          const fade = ctx.createRadialGradient(cx, cy, 0, cx, cy, R);
+          fade.addColorStop(0, 'rgba(21, 35, 63, 0)');
+          fade.addColorStop(0.62, 'rgba(21, 35, 63, 0)');
+          fade.addColorStop(1, 'rgba(21, 35, 63, 0.45)');
+          ctx.fillStyle = fade;
+          ctx.fillRect(cx - R, cy - R, R * 2, R * 2);
+        }
+        // warmer Schein um die Figur
+        const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, R * 0.8);
+        glow.addColorStop(0, 'rgba(255, 244, 200, 0.24)');
+        glow.addColorStop(1, 'rgba(255, 244, 200, 0)');
+        ctx.fillStyle = glow;
+        ctx.fillRect(cx - R, cy - R, R * 2, R * 2);
+      }
+      ctx.restore();
+      if (me) {
+        ctx.lineWidth = Math.max(1.5, s * 0.03);
+        ctx.strokeStyle = 'rgba(242, 240, 221, 0.3)';
+        ctx.beginPath();
+        ctx.arc(sx(me.x), sy(me.y), R, 0, TAU);
+        ctx.stroke();
+      }
+      ctx.restore();
     }
-    // warmer Schein rund um jede Lichtquelle
-    for (const p of view.players) {
-      if (!allLit && p !== me) continue;
-      const glow = ctx.createRadialGradient(sx(p.x), sy(p.y), 0, sx(p.x), sy(p.y), s * 3.2);
-      glow.addColorStop(0, 'rgba(255, 244, 200, 0.26)');
-      glow.addColorStop(1, 'rgba(255, 244, 200, 0)');
-      ctx.fillStyle = glow;
-      ctx.fillRect(sx(p.x) - s * 3.2, sy(p.y) - s * 3.2, s * 6.4, s * 6.4);
-    }
-    ctx.restore();
 
     // Wer ist zu sehen?
     for (const p of view.players) {
       const actor = actors[p.slot];
-      const visible = allLit || p.mine || inSight(me, p.x, p.y);
-      actor.alpha += ((visible ? 1 : 0) - actor.alpha) * Math.min(1, dt * (visible ? 16 : 7));
+      const out = p.dead > 0;
+      const visible = !out && (whole || spectate || p.mine || inSight(me, p.x, p.y));
+      actor.alpha += ((visible ? 1 : 0) - actor.alpha) * Math.min(1, dt * (visible ? 18 : 10));
+      if (out && !p.mine) actor.alpha = 0;
       if (actor.tp !== p.tp) {
         if (actor.tp !== -1 || view.phase === PHASE.COUNTDOWN) actor.trail.length = 0;
         if (p.mine) locate(p.x, p.y, WISPS[p.slot].color, now);
         if (!visible) actor.alpha = 0;
         actor.tp = p.tp;
       }
+      if (out) actor.trail.length = 0;
       const last = actor.trail[actor.trail.length - 1];
-      if (view.phase === PHASE.PLAY && (!last || Math.abs(last.x - p.x) + Math.abs(last.y - p.y) > 0.045)) {
+      if (!out && view.phase === PHASE.PLAY && (!last || Math.abs(last.x - p.x) + Math.abs(last.y - p.y) > 0.045)) {
         actor.trail.push({ x: p.x, y: p.y, t: now, life: p.sp ? 330 : 210 });
       }
       while (actor.trail.length && now - actor.trail[0].t > actor.trail[0].life) actor.trail.shift();
@@ -618,12 +661,17 @@ export function createRenderer(canvas, back) {
     const order = view.players.filter((p) => !p.mine).concat(view.players.filter((p) => p.mine));
     for (const p of order) {
       const actor = actors[p.slot];
+      if (p.mine && p.dead > 0) {
+        drawGhost(p, actor, now, dt);
+        continue;
+      }
       if (actor.alpha < 0.02) continue;
       drawWisp(p, actor, actor.alpha, now, dt);
     }
     if (me) {
       const prey = view.players[view.prey];
-      drawOwnMarks(me, actors[me.slot], prey, actors[prey.slot].alpha, now, dt, view.phase);
+      const playing = view.phase === PHASE.PLAY || view.phase === PHASE.COUNTDOWN;
+      if (me.dead === 0 && playing) drawOwnMarks(me, prey, actors[prey.slot].alpha, now, view.phase);
       if (tags && view.phase !== PHASE.END) {
         for (const p of view.players) {
           if (p.mine || actors[p.slot].alpha < 0.05) continue;

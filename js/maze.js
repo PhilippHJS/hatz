@@ -213,8 +213,8 @@ function allDistances(m) {
   return dist;
 }
 
-// Sichtstrahl von (px, py) in Richtung (dx, dy). Liefert die Strecke bis zur
-// ersten Hecke, höchstens maxT.
+// Strahl von (px, py) in Richtung (dx, dy). Liefert die Strecke bis zur ersten
+// Hecke, höchstens maxT.
 export function castRay(m, px, py, dx, dy, maxT) {
   let cx = Math.floor(px);
   let cy = Math.floor(py);
@@ -241,7 +241,7 @@ export function castRay(m, px, py, dx, dy, maxT) {
   return maxT;
 }
 
-// Kann man von a nach b sehen?
+// Steht zwischen a und b keine Hecke (und sind sie höchstens `radius` auseinander)?
 export function canSee(m, ax, ay, bx, by, radius) {
   const dx = bx - ax;
   const dy = by - ay;

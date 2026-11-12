@@ -4,12 +4,12 @@ import assert from 'node:assert/strict';
 
 import { buildMaze, hWall, vWall, castRay, canSee, cellAt, pathDist } from '../js/maze.js';
 import { newBody, stepBody, packInput, IDLE } from '../js/physics.js';
-import { createSim, startRound, stepSim, preyOf, hunterOf, PHASE, ranking } from '../js/sim.js';
+import { createSim, startRound, stepSim, preyOf, hunterOf, sees, PHASE, ranking } from '../js/sim.js';
 import { createBot } from '../js/bots.js';
 import { makeRng } from '../js/rng.js';
 import {
   HIT_R, WALK_SPEED, SPRINT_SPEED, DT, TICK_RATE, COUNTDOWN_TICKS, SHIELD_TICKS, CATCH_DIST,
-  SPRINT_SECONDS, MAZE_W, MAZE_H,
+  SPRINT_SECONDS, MAZE_W, MAZE_H, RESPAWN_TICKS, VISION_RADIUS,
 } from '../js/config.js';
 
 // Kleinster Abstand der Figur zu irgendeiner Hecke
@@ -66,7 +66,7 @@ test('Labyrinth: zusammenhängend, spiegelgleich, ohne Sackgassen', () => {
   assert.ok(share > 0.2 && share < 0.6, `Anteil Kreuzungen ${share.toFixed(2)}`);
 });
 
-test('Sicht: Strahlen enden an Hecken', () => {
+test('Hecken: Strahlen enden an ihnen', () => {
   const m = mazeFromText([
     '#######',
     '#     #',
@@ -189,7 +189,7 @@ test('Bewegung: Sprint kostet Ausdauer und erholt sich', () => {
   assert.equal(b.ex, false);
 });
 
-test('Regeln: Fangen gibt einen Punkt, kostet einen und setzt die Beute weit weg', () => {
+test('Regeln: Fangen gibt einen Punkt, kostet einen, dann drei Sekunden Auszeit', () => {
   const sim = createSim();
   startRound(sim, 4242, 60);
   assert.equal(sim.phase, PHASE.COUNTDOWN);
@@ -209,30 +209,91 @@ test('Regeln: Fangen gibt einen Punkt, kostet einen und setzt die Beute weit weg
   // Der Dritte läuft seinem eigenen Jäger in die Arme: Punkt für den Jäger.
   third.body.x = prey.body.x;
   third.body.y = prey.body.y;
+  const tp = third.tp;
   stepSim(sim, idle);
+  const caughtAt = sim.tick;
   assert.equal(prey.score, 1);
   assert.equal(third.score, -1);
   assert.equal(hunter.score, 0);
+  assert.equal(third.dead, RESPAWN_TICKS, 'der Gefangene setzt aus');
+  assert.equal(third.tp, tp, 'und bleibt erst einmal, wo er ist');
+  assert.equal(sim.events.length, 1);
 
-  const tp = prey.tp;
-  hunter.body.x = prey.body.x + CATCH_DIST * 0.9;
-  hunter.body.y = prey.body.y;
+  // Wer aussetzt, wird nicht noch einmal gefangen ...
   stepSim(sim, idle);
-  assert.equal(hunter.score, 1);
-  assert.equal(prey.score, 0);
+  assert.equal(prey.score, 1);
+  // ... fängt selbst niemanden, auch wenn seine Beute direkt auf ihm steht ...
+  prey.body.x = before[third.slot].x; // die Beute geht derweil woandershin
+  prey.body.y = before[third.slot].y;
+  hunter.body.x = third.body.x;
+  hunter.body.y = third.body.y;
+  stepSim(sim, idle);
   assert.equal(third.score, -1);
-  assert.equal(prey.tp, tp + 1);
-  assert.equal(prey.shield, SHIELD_TICKS - 1);
+  assert.equal(hunter.score, 0);
+  assert.equal(hunter.dead, 0);
+  // ... und bewegt sich nicht.
+  const spot = { x: third.body.x, y: third.body.y };
+  const push = [[IDLE], [IDLE], [IDLE]];
+  push[third.slot] = [packInput(1, 1, true)];
+  for (let t = 0; t < 30; t += 1) stepSim(sim, push);
+  assert.deepEqual({ x: third.body.x, y: third.body.y }, spot);
+
+  // Nach genau drei Sekunden steigt er weit weg wieder ein, mit Schonfrist.
+  while (third.dead > 0) stepSim(sim, idle);
+  assert.equal(sim.tick - caughtAt, RESPAWN_TICKS);
+  assert.equal(third.tp, tp + 1);
+  assert.equal(third.shield, SHIELD_TICKS - 1);
+  assert.equal(third.body.st, 1);
   const m = sim.maze;
-  const far = pathDist(m, cellAt(m, prey.body.x, prey.body.y), cellAt(m, hunter.body.x, hunter.body.y));
-  assert.ok(far >= 8, `Wiedereinstieg nur ${far} Felder entfernt`);
-  assert.equal(sim.events.length, 2);
+  const here = cellAt(m, third.body.x, third.body.y);
+  for (const other of [hunter, prey]) {
+    const far = pathDist(m, here, cellAt(m, other.body.x, other.body.y));
+    assert.ok(far >= 8, `Wiedereinstieg nur ${far} Felder von Platz ${other.slot} entfernt`);
+  }
 
   // Schonfrist: sofort wieder berühren zählt nicht
-  hunter.body.x = prey.body.x;
-  hunter.body.y = prey.body.y;
+  prey.body.x = third.body.x;
+  prey.body.y = third.body.y;
   stepSim(sim, idle);
-  assert.equal(hunter.score, 1);
+  assert.equal(prey.score, 1);
+  assert.equal(third.dead, 0);
+});
+
+test('Regeln: Sichtkreis und Jagdfieber', () => {
+  const sim = createSim();
+  startRound(sim, 77, 60);
+  const idle = [[IDLE], [IDLE], [IDLE]];
+  for (let t = 0; t < COUNTDOWN_TICKS; t += 1) stepSim(sim, idle);
+  const hunter = sim.players[0];
+  const prey = sim.players[preyOf(sim.ringDir, 0)];
+  const third = sim.players[hunterOf(sim.ringDir, 0)];
+  // den Dritten aus dem Weg räumen
+  third.body.x = hunter.body.x < MAZE_W / 2 ? MAZE_W - 0.5 : 0.5;
+  third.body.y = hunter.body.y;
+  // Beute knapp innerhalb des Kreises, egal ob Hecken dazwischen stehen
+  const side = hunter.body.x < MAZE_W / 2 ? 1 : -1;
+  prey.body.x = hunter.body.x + side * (VISION_RADIUS - 0.1);
+  prey.body.y = hunter.body.y;
+  assert.equal(sees(hunter, prey), true);
+  assert.equal(sees(prey, hunter), true, 'Sicht gilt in beide Richtungen');
+  stepSim(sim, idle);
+  assert.equal(hunter.body.hot, true, 'Beute im Sichtkreis: Jagdfieber');
+  assert.equal(prey.body.hot, false, 'der Gejagte wird davon nicht schneller');
+  // knapp außerhalb
+  prey.body.x = hunter.body.x + side * (VISION_RADIUS + 0.1);
+  assert.equal(sees(hunter, prey), false);
+  stepSim(sim, idle);
+  assert.equal(hunter.body.hot, false);
+  // geschützte oder aussetzende Beute zählt nicht
+  prey.body.x = hunter.body.x + side * 2;
+  prey.shield = 50;
+  stepSim(sim, idle);
+  assert.equal(hunter.body.hot, false);
+  prey.shield = 0;
+  prey.dead = 20;
+  assert.equal(sees(hunter, prey), false, 'wer aussetzt, ist nicht zu sehen');
+  stepSim(sim, idle);
+  assert.equal(hunter.body.hot, false);
 });
 
 test('Regeln: Runde endet pünktlich, Rangfolge stimmt', () => {

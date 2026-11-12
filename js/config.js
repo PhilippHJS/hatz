@@ -2,7 +2,7 @@
 
 export const TICK_RATE = 60;
 export const DT = 1 / TICK_RATE;
-export const PROTOCOL = 1;
+export const PROTOCOL = 2;
 
 export const MAZE_W = 20;
 export const MAZE_H = 12;
@@ -22,11 +22,13 @@ export const REGEN_DELAY = Math.round(0.5 * TICK_RATE); // Schritte Pause, bevor
 export const RECOVER_AT = 0.25; // wer sich leer gesprintet hat, darf ab hier wieder
 
 export const CATCH_DIST = PLAYER_R * 2.1;
+export const RESPAWN_TICKS = 3 * TICK_RATE; // Auszeit nach dem Fang, mit Blick aufs ganze Feld
 export const SHIELD_TICKS = Math.round(2.5 * TICK_RATE); // Schonfrist nach dem Wiedereinstieg
 export const COUNTDOWN_TICKS = 4 * TICK_RATE;
 export const ROUND_SECONDS = 180;
 
-export const VISION_RADIUS = 7.5;
+// Sichtkreis: Wer näher ist, wird gesehen, auch hinter einer Hecke.
+export const VISION_RADIUS = 3.5;
 
 // Die drei Irrlichter. Die Zahl der Zacken unterscheidet sie auch ohne Farbe.
 export const WISPS = [

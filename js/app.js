@@ -37,7 +37,7 @@ const myId = load(sessionStorage, 'hatz-id') || makeId();
 save(sessionStorage, 'hatz-id', myId);
 
 const canvas = $('#stage');
-const renderer = createRenderer(canvas, $('#floor'));
+const renderer = createRenderer(canvas, $('#floor'), $('#wide'));
 const keyboard = createKeyboard(window);
 
 let session = null; // { role, code, host, client, net, status, since }
@@ -358,7 +358,11 @@ function updateRoom(view) {
 function updateHud(view, t) {
   const client = session.client;
   const names = view.players.map((p) => p.name);
-  const chip = (slot, role, me) => `<div class="chip${me ? ' me' : ''}">${wispSvg(slot)}<span class="who">${esc(names[slot])}</span><span class="role">${role}</span><span class="pts">${view.players[slot].score}</span></div>`;
+  const chip = (slot, role, me) => {
+    const out = view.players[slot].dead > 0;
+    return `<div class="chip${me ? ' me' : ''}${out ? ' out' : ''}">${wispSvg(slot)}<span class="who">${esc(names[slot])}</span>`
+      + `<span class="role">${out ? 'setzt aus' : role}</span><span class="pts">${view.players[slot].score}</span></div>`;
+  };
   const ring = chip(view.hunter, 'jagt dich', false) + HUNTS + chip(view.slot, 'du', true) + HUNTS + chip(view.prey, 'deine Beute', false);
   put('ring', ring, (v) => {
     $('#ring').innerHTML = v;
@@ -390,6 +394,15 @@ function updateHud(view, t) {
   if (view.phase !== PHASE.PLAY) playSince = 0;
   put('hint', keyboard.hasMoved() && playSince && t - playSince > 6000, (gone) => {
     $('#hint').classList.toggle('gone', gone);
+  });
+
+  // Auszeit nach einem Fang: wer es war und wann es weitergeht
+  const mine = view.players[view.slot];
+  const down = view.phase === PHASE.PLAY && mine.dead > 0;
+  put('down', down ? `${view.hunter}|${names[view.hunter]}|${Math.ceil(mine.dead / TICK_RATE)}` : '', (v) => {
+    $('#down').hidden = !v;
+    if (!v) return;
+    $('#down').innerHTML = `<b style="color:${WISPS[view.hunter].color}">${esc(names[view.hunter])}</b> hat dich gefangen. Weiter in <span class="secs">${Math.ceil(mine.dead / TICK_RATE)}</span>`;
   });
 
   if (counting) {

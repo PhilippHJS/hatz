@@ -88,7 +88,8 @@ export function createClient({ id, name, watch = false, link }) {
     renderMe(before);
     loadBody(me, arr);
     copyBody(me, mePrev);
-    if (snap.ph === PHASE.PLAY && client.maze) {
+    const out = arr[10] > 0; // gefangen: Die Figur steht, bis sie wieder einsteigt
+    if (snap.ph === PHASE.PLAY && client.maze && !out) {
       for (let i = 0; i < pending.length; i += 1) {
         if (i === pending.length - 1) copyBody(me, mePrev);
         stepBody(client.maze, me, pending[i].code);
@@ -100,7 +101,7 @@ export function createClient({ id, name, watch = false, link }) {
     haveMe = true;
     const dx = before.x - after.x;
     const dy = before.y - after.y;
-    if (jumped || dx * dx + dy * dy > 2.25) {
+    if (jumped || out || dx * dx + dy * dy > 2.25) {
       err.x = 0;
       err.y = 0;
     } else {
@@ -233,7 +234,8 @@ export function createClient({ id, name, watch = false, link }) {
       pending.push({ seq, code: inputCode });
       if (pending.length > 240) pending.shift();
       copyBody(me, mePrev);
-      if (client.latest && client.latest.ph === PHASE.PLAY && client.maze) stepBody(client.maze, me, inputCode);
+      const live = client.latest && client.latest.ph === PHASE.PLAY && client.latest.p[client.slot][10] === 0;
+      if (live && client.maze) stepBody(client.maze, me, inputCode);
       recent.push(inputCode);
       if (recent.length > 8) recent.shift();
       stepsSinceSend += 1;
@@ -263,7 +265,7 @@ export function createClient({ id, name, watch = false, link }) {
     }
   };
 
-  const lerpOut = { x: 0, y: 0, vx: 0, vy: 0, tp: 0 };
+  const lerpOut = { x: 0, y: 0, vx: 0, vy: 0, tp: 0, dead: 0 };
   function remoteAt(slot, tick) {
     const n = snaps.length;
     if (!n) return null;
@@ -271,11 +273,12 @@ export function createClient({ id, name, watch = false, link }) {
     while (b < n && snaps[b].k <= tick) b += 1;
     if (b === 0) {
       const p = snaps[0].p[slot];
-      lerpOut.x = p[0]; lerpOut.y = p[1]; lerpOut.vx = p[2]; lerpOut.vy = p[3]; lerpOut.tp = p[9];
+      lerpOut.x = p[0]; lerpOut.y = p[1]; lerpOut.vx = p[2]; lerpOut.vy = p[3]; lerpOut.tp = p[9]; lerpOut.dead = p[10];
       return lerpOut;
     }
     const pa = snaps[b - 1].p[slot];
     lerpOut.tp = pa[9];
+    lerpOut.dead = pa[10];
     if (b === n) {
       // neuester Stand ist schon älter: kurz in Laufrichtung weiterdenken
       const ahead = Math.min(tick - snaps[n - 1].k, 8) * DT;
@@ -302,7 +305,7 @@ export function createClient({ id, name, watch = false, link }) {
     slot: -1, prey: -1, hunter: -1,
     players: [0, 1, 2].map((slot) => ({
       slot, x: 0, y: 0, vx: 0, vy: 0, st: 1, ex: false, sp: false, hot: false,
-      score: 0, shield: 0, tp: 0, name: WISPS[slot].name, kind: 'bot', online: true, mine: false,
+      score: 0, shield: 0, tp: 0, dead: 0, name: WISPS[slot].name, kind: 'bot', online: true, mine: false,
     })),
   };
 
@@ -339,8 +342,9 @@ export function createClient({ id, name, watch = false, link }) {
       out.hot = (arr[5] & 4) !== 0;
       out.score = arr[7];
       out.shield = arr[8];
-      // Der Sprung an einen neuen Ort gilt erst, wenn er auch zu sehen ist.
+      // Sprung an einen neuen Ort und Auszeit gelten erst, wenn sie auch zu sehen sind.
       out.tp = out.mine ? arr[9] : lerpOut.tp;
+      out.dead = out.mine ? arr[10] : lerpOut.dead;
       if (info) {
         out.name = info.name;
         out.kind = info.kind;

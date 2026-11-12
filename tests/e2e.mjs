@@ -220,6 +220,8 @@ async function run(mode) {
     const prey = sim.players[(slot + sim.ringDir + 3) % 3];
     const me = sim.players[slot];
     prey.shield = 0;
+    prey.dead = 0;
+    me.dead = 0;
     me.body.x = prey.body.x;
     me.body.y = prey.body.y;
     me.tp += 1;
@@ -233,6 +235,27 @@ async function run(mode) {
   const scores = await Promise.all(all.map(async (page) => (await state(page)).players.map((p) => p.score).join()));
   check(scores.every((text) => text === scores[0]) && scores[0].includes('-1'), `Punktestand überall gleich (${scores[0]})`);
   check((await g1.textContent('#ring .me .pts')) === String(wanted), 'Anzeige zeigt den Punkt');
+
+  // Die Beute setzt drei Sekunden aus und sieht so lange das ganze Feld.
+  const preySlot = (s1.slot + (await truth(host)).ringDir + 3) % 3;
+  let preyPage = null;
+  for (const page of all) if ((await state(page)).slot === preySlot) preyPage = page;
+  const outState = await preyPage.evaluate((slot) => ({
+    dead: window.__hatz.view().players[slot].dead,
+    banner: document.querySelector('#down').hidden ? '' : document.querySelector('#down').textContent,
+    wide: document.querySelector('#wide').style.opacity,
+  }), preySlot);
+  check(outState.dead > 0 && /gefangen/.test(outState.banner), `Gefangener setzt aus: "${outState.banner}"`);
+  check(outState.wide === '1', 'in der Auszeit ist das ganze Feld zu sehen');
+  check(await g1.evaluate(() => Boolean(document.querySelector('#ring .chip.out'))), 'der Jäger sieht, dass seine Beute aussetzt');
+  if (direct) await shot(preyPage, '05b-auszeit');
+  const diedAt = Date.now();
+  await until(preyPage, (slot) => window.__hatz.view().players[slot].dead === 0, preySlot, 8000);
+  const waited = (Date.now() - diedAt + 900) / 1000;
+  check(waited > 2.2 && waited < 4.2, `Wiedereinstieg nach rund drei Sekunden (${waited.toFixed(1)} s seit dem Fang)`);
+  await sleep(400);
+  const backState = await preyPage.evaluate(() => ({ banner: document.querySelector('#down').hidden, wide: document.querySelector('#wide').style.opacity }));
+  check(backState.banner && backState.wide === '0', 'danach wieder nur der eigene Sichtkreis');
 
   if (direct) {
     // Bild einer Begegnung: Gast 1 sieht Beute und Jäger
@@ -248,10 +271,9 @@ async function run(mode) {
             me.body.x = x + 0.5; me.body.y = y + 0.5;
             const prey = sim.players[(slot + sim.ringDir + 3) % 3];
             const hunter = sim.players[(slot - sim.ringDir + 3) % 3];
-            prey.body.x = x + 2.4; prey.body.y = y + 0.5; prey.shield = 0;
+            prey.body.x = x + 2.4; prey.body.y = y + 0.5;
             hunter.body.x = x - 1.4; hunter.body.y = y + 0.5;
-            for (const p of sim.players) { p.tp += 1; p.body.vx = 0; p.body.vy = 0; }
-            me.shield = 200;
+            for (const p of sim.players) { p.tp += 1; p.body.vx = 0; p.body.vy = 0; p.dead = 0; p.shield = 0; }
             return;
           }
         }

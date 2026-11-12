@@ -13,6 +13,7 @@
 </head>
 <body>
   <canvas id="floor" aria-hidden="true"></canvas>
+  <canvas id="wide" aria-hidden="true"></canvas>
   <canvas id="stage" aria-label="Spielfeld"></canvas>
   <div id="scrim" aria-hidden="true"></div>
 
@@ -66,8 +67,9 @@
       <summary>So wird gespielt</summary>
       <ul>
         <li>Der Pfeil an deiner Figur zeigt zu deiner Beute. Berühre sie: ein Punkt für dich, einer weniger für sie.</li>
-        <li>Du siehst nur, was deine Figur sieht. Dein Jäger kann hinter jeder Hecke stecken.</li>
-        <li>Wer seine Beute sieht, läuft schneller. Brich den Blickkontakt, um zu entkommen.</li>
+        <li>Andere siehst du nur im Sichtkreis um deine Figur. Dein Jäger taucht erst auf, wenn er hineinkommt.</li>
+        <li>Wer seine Beute im Sichtkreis hat, läuft schneller. Lauf aus dem Kreis heraus, um zu entkommen.</li>
+        <li>Wer gefangen wird, setzt drei Sekunden aus und sieht so lange das ganze Feld.</li>
         <li>Sprinten kostet Ausdauer. Wer sich leer sprintet, muss kurz verschnaufen.</li>
       </ul>
       <p>Bewegen mit WASD oder den Pfeiltasten, sprinten mit der Leertaste oder Shift.</p>
@@ -80,6 +82,7 @@
     <div id="ring" aria-live="off"></div>
     <div id="timer" aria-label="Restzeit"></div>
     <button type="button" class="quiet" id="b-quit">Verlassen</button>
+    <p id="down" hidden></p>
     <p id="conn"></p>
     <p id="hint">Bewegen mit WASD oder den Pfeiltasten, sprinten mit der Leertaste</p>
   </div>

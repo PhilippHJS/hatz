@@ -76,7 +76,7 @@ export function createHost({ seconds = ROUND_SECONDS, autoRestart = false, onCha
       rd: sim.ringDir,
       p: sim.players.map((player) => {
         const b = player.body;
-        return [b.x, b.y, b.vx, b.vy, b.st, (b.ex ? 1 : 0) | (b.sp ? 2 : 0) | (b.hot ? 4 : 0), b.rw, player.score, player.shield, player.tp];
+        return [b.x, b.y, b.vx, b.vy, b.st, (b.ex ? 1 : 0) | (b.sp ? 2 : 0) | (b.hot ? 4 : 0), b.rw, player.score, player.shield, player.tp, player.dead];
       }),
       a: slots.map((slot) => slot.ackSeq),
       e: sim.events.map((event) => [event.id, event.tick, event.by, event.of, event.x, event.y]),

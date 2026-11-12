@@ -17,10 +17,10 @@ Das Gerät des Gastgebers führt den Spielstand. Seine Seite muss offen bleiben,
 ## Regeln
 
 - Drei Irrlichter in einem nächtlichen Irrgarten. Glut, Frost und Malve bilden einen Ring: Jeder jagt genau einen und wird vom anderen gejagt. Die Richtung des Rings wechselt von Runde zu Runde.
-- Wer seine Beute berührt, bekommt einen Punkt, die Beute verliert einen und steigt weit entfernt wieder ein. Dort ist sie kurz geschützt.
-- Man sieht nur, was die eigene Figur sieht. Hecken versperren die Sicht. Ein Pfeil an der eigenen Figur zeigt immer zur Beute, den Jäger sieht man erst, wenn er in Sicht kommt.
-- Alle sind gleich schnell. Nur wer seine Beute gerade sieht, läuft etwas schneller (Jagdfieber). Wer flieht, muss also den Blickkontakt brechen.
-- Sprinten kostet Ausdauer. Wer sich leer sprintet, muss kurz verschnaufen.
+- Wer seine Beute berührt, bekommt einen Punkt, die Beute verliert einen. Sie setzt drei Sekunden aus, sieht so lange das ganze Feld und steigt dann weit entfernt wieder ein. Dort ist sie kurz geschützt.
+- Jede Figur hat einen Sichtkreis. Wer darin ist, wird gesehen, auch hinter einer Hecke, alle anderen bleiben verborgen. Ein Pfeil an der eigenen Figur zeigt immer zur Beute, den Jäger sieht man erst, wenn er in den Kreis kommt.
+- Alle sind gleich schnell. Nur wer seine Beute gerade im Sichtkreis hat, läuft etwas schneller (Jagdfieber). Wer flieht, muss also aus dem Kreis heraus.
+- Sprinten kostet Ausdauer, der Balken unter der eigenen Figur zeigt sie an. Wer sich leer sprintet, muss kurz verschnaufen.
 - Nach Ablauf der Zeit gewinnt der höchste Punktestand. Jede Runde hat ein neues Labyrinth.
 
 ## Technik
@@ -31,7 +31,7 @@ Eine statische Seite ohne Server und ohne Build-Schritt.
 - `js/maze.js`, `js/physics.js`, `js/sim.js`, `js/bots.js`: Labyrinth, Bewegung, Regeln und Bots, ohne Browser-Abhängigkeiten
 - `js/host.js`, `js/client.js`: Gastgeber und die Sicht eines Geräts auf das Spiel
 - `js/net.js`: Verbindung zwischen den Geräten und Verschlüsselung
-- `js/render.js`, `js/vision.js`, `js/input.js`, `js/app.js`: Darstellung, Sichtfeld, Tastatur, Oberfläche
+- `js/render.js`, `js/input.js`, `js/app.js`: Darstellung, Tastatur, Oberfläche
 
 ### Warum sich die Steuerung direkt anfühlt
 
